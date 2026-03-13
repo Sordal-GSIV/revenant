@@ -1,4 +1,5 @@
 use anyhow::Result;
+use crate::game_obj::GameObjRegistry;
 use crate::map::MapData;
 use mlua::prelude::*;
 use std::collections::HashMap;
@@ -11,6 +12,7 @@ pub struct ScriptEngine {
     pub downstream_tx: Arc<Mutex<Option<tokio::sync::broadcast::Sender<Arc<Vec<u8>>>>>>,
     pub respond_sink: Arc<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>>,
     pub game_state: Arc<Mutex<Option<Arc<RwLock<crate::game_state::GameState>>>>>,
+    pub game_objs: Arc<Mutex<Option<Arc<Mutex<GameObjRegistry>>>>>,
     pub map_data: Arc<RwLock<Option<MapData>>>,
     pub scripts_dir: Arc<Mutex<String>>,
     pub running: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
@@ -38,6 +40,7 @@ impl ScriptEngine {
             downstream_tx: Arc::new(Mutex::new(None)),
             respond_sink: Arc::new(Mutex::new(None)),
             game_state: Arc::new(Mutex::new(None)),
+            game_objs: Arc::new(Mutex::new(None)),
             map_data: Arc::new(RwLock::new(None)),
             scripts_dir: Arc::new(Mutex::new("../scripts".to_string())),
             running: Arc::new(Mutex::new(HashMap::new())),
@@ -71,6 +74,14 @@ impl ScriptEngine {
 
     pub fn set_respond_sink<F: Fn(String) + Send + Sync + 'static>(&self, f: F) {
         *self.respond_sink.lock().unwrap() = Some(Box::new(f));
+    }
+
+    pub fn set_game_objs(&self, go: Arc<Mutex<GameObjRegistry>>) {
+        *self.game_objs.lock().unwrap() = Some(go);
+    }
+
+    pub fn clear_game_objs(&self) {
+        *self.game_objs.lock().unwrap() = None;
     }
 
     pub fn set_game_state(&self, gs: Arc<RwLock<crate::game_state::GameState>>) {

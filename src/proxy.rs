@@ -1,6 +1,6 @@
-use crate::{config::Config, eaccess, game_state::GameState, script_engine::ScriptEngine, xml_parser::StreamParser};
+use crate::{config::Config, eaccess, game_obj::GameObjRegistry, game_state::GameState, script_engine::ScriptEngine, xml_parser::{ObjHand, ObjCategory, StreamParser}};
 use anyhow::Result;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
@@ -120,6 +120,9 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
 
         // Wire engine
         engine.set_game_state(game_state.clone());
+        let game_objs: Arc<Mutex<GameObjRegistry>> = Arc::new(Mutex::new(GameObjRegistry::new()));
+        engine.set_game_objs(game_objs.clone());
+        let go_arc = game_objs.clone();
         engine.set_downstream_channel(downstream_tx.clone());
 
         // Wire upstream sink: Lua calls sink(line) → upstream_tx
@@ -185,14 +188,67 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                     let _ = f.write_all(&raw);
                 }
                 {
-                    let mut state = gs.write().unwrap_or_else(|e| e.into_inner());
-                    for event in parser.feed(&chunk) {
+                    let events = parser.feed(&chunk);
+
+                    // Game log capture (no locks on gs or go needed)
+                    for event in &events {
                         if let crate::xml_parser::XmlEvent::Text { ref content } = event {
                             let mut log = game_log.lock().unwrap();
                             if log.len() >= 2000 { log.pop_front(); }
                             log.push_back(content.clone());
                         }
-                        state.apply(event);
+                    }
+
+                    // Game object registry updates (go lock only)
+                    {
+                        let mut go: std::sync::MutexGuard<'_, GameObjRegistry> = go_arc.lock().unwrap();
+                        for event in &events {
+                            match event {
+                                crate::xml_parser::XmlEvent::GameObjCreate { id, noun, name, category, status } => {
+                                    match category {
+                                        ObjCategory::Npc  => go.new_npc(id, noun, name, status.as_deref()),
+                                        ObjCategory::Loot => go.new_loot(id, noun, name),
+                                        ObjCategory::Pc   => go.new_pc(id, noun, name, status.as_deref()),
+                                        ObjCategory::RoomDesc => go.new_room_desc(id, noun, name),
+                                        ObjCategory::Inv { container } => {
+                                            go.new_inv(id, noun, name, container.as_deref(), None, None);
+                                        }
+                                    }
+                                }
+                                crate::xml_parser::XmlEvent::GameObjHandUpdate { hand, id, noun, name } => {
+                                    match hand {
+                                        ObjHand::Right => go.new_right_hand(id, noun, name),
+                                        ObjHand::Left  => go.new_left_hand(id, noun, name),
+                                    }
+                                }
+                                crate::xml_parser::XmlEvent::GameObjHandClear { hand } => {
+                                    match hand {
+                                        ObjHand::Right => go.right_hand = None,
+                                        ObjHand::Left  => go.left_hand = None,
+                                    }
+                                }
+                                crate::xml_parser::XmlEvent::ComponentClear { component_id } => {
+                                    match component_id.as_str() {
+                                        "room objs"    => { go.clear_loot(); go.clear_npcs(); }
+                                        "room players" => go.clear_pcs(),
+                                        "inv"          => go.clear_inv(),
+                                        _ => {}
+                                    }
+                                }
+                                crate::xml_parser::XmlEvent::RoomId { .. } => {
+                                    go.clear_for_room_transition();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    // GameState updates (gs lock only)
+                    {
+                        let mut state = gs.write().unwrap_or_else(|e| e.into_inner());
+                        for event in events {
+                            state.apply(event);
+                        }
                     }
                 }
                 // Always broadcast raw bytes to ds_tx first (for waitfor)
@@ -308,6 +364,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         *engine.downstream_tx.lock().unwrap() = None;
         *engine.respond_sink.lock().unwrap() = None;
         *engine.game_state.lock().unwrap() = None;
+        engine.clear_game_objs();
         info!("Session ended, engine state cleared");
         session_result?;
     }
