@@ -31,116 +31,226 @@ pub enum XmlEvent {
     Unknown { tag: String },
 }
 
-/// Parse a chunk of the GemStone XML stream into events.
-/// The stream mixes XML tags with plain text. This parser is line-oriented
-/// and best-effort — partial tags across TCP packet boundaries will appear
-/// as Text events and be forwarded unchanged to the client.
+/// Streaming GemStone XML parser.
 ///
-/// Tracks `<style id="roomName"/>` / `<style id="roomDesc"/>` within the
-/// chunk to emit RoomName / RoomDescription events from styled text.
+/// GemStone sends a pseudo-XML byte stream over TCP. TCP read boundaries do not
+/// align with XML element boundaries, so a tag or element may be split across
+/// multiple reads. `StreamParser` accumulates data in an internal buffer and
+/// only processes complete tokens — exactly like Lich5's `@buffer` approach.
+///
+/// Call `feed()` for each TCP read; it returns all fully-parseable events from
+/// the buffer and leaves any incomplete token for the next call.
+pub struct StreamParser {
+    buf: String,
+    current_style: Option<String>,
+}
+
+impl StreamParser {
+    pub fn new() -> Self {
+        Self { buf: String::new(), current_style: None }
+    }
+
+    /// Append `data` to the internal buffer and return all complete events.
+    pub fn feed(&mut self, data: &str) -> Vec<XmlEvent> {
+        self.buf.push_str(data);
+        self.drain()
+    }
+
+    fn drain(&mut self) -> Vec<XmlEvent> {
+        let mut events = Vec::new();
+
+        loop {
+            match self.buf.find('<') {
+                None => {
+                    // No tag start — all plain text
+                    let text = std::mem::take(&mut self.buf);
+                    emit_text(&mut events, &text, &self.current_style);
+                    break;
+                }
+                Some(0) => {
+                    // Buffer starts with a tag; find its closing '>'
+                    match find_gt(&self.buf, 0) {
+                        None => break, // Tag incomplete — wait for more data
+                        Some(gt) => {
+                            let tag_inner = self.buf[1..gt].to_string();
+                            self.buf.drain(..=gt);
+                            self.process_tag(&tag_inner, &mut events);
+                        }
+                    }
+                }
+                Some(lt) => {
+                    // Plain text before the next tag
+                    let text: String = self.buf.drain(..lt).collect();
+                    emit_text(&mut events, &text, &self.current_style);
+                    // Loop: buffer now starts at '<'
+                }
+            }
+        }
+
+        events
+    }
+
+    fn process_tag(&mut self, inner: &str, events: &mut Vec<XmlEvent>) {
+        if inner.starts_with('/') {
+            // End tag — ignored (nesting not tracked)
+            return;
+        }
+        if inner.starts_with('!') || inner.starts_with('?') {
+            // Comment / processing instruction — skip
+            return;
+        }
+
+        if inner.ends_with('/') {
+            // Self-closing tag: <tag attr="val"/>
+            let body = inner.trim_end_matches('/').trim_end();
+            let xml = format!("<{}/>\n", body);
+            if let Some(ev) = parse_empty_xml(&xml) {
+                match ev {
+                    XmlEvent::StylePush { ref id } => {
+                        self.current_style = Some(id.clone());
+                    }
+                    XmlEvent::StylePop => {
+                        self.current_style = None;
+                    }
+                    XmlEvent::Health { value, max } => {
+                        tracing::info!("health={value}/{max:?}");
+                        events.push(ev);
+                    }
+                    XmlEvent::Mana { value, max } => {
+                        tracing::info!("mana={value}/{max:?}");
+                        events.push(ev);
+                    }
+                    _ => events.push(ev),
+                }
+            } else {
+                let tag = inner.split_whitespace().next().unwrap_or("").to_string();
+                events.push(XmlEvent::Unknown { tag });
+            }
+        } else {
+            // Start tag: <tag attr="val">
+            let tag_name = inner.split_whitespace().next().unwrap_or("");
+            match tag_name {
+                "prompt" | "component" | "spell" => {
+                    // Need to find the matching end tag before we can parse
+                    let end_tag = format!("</{}>", tag_name);
+                    match self.buf.find(&end_tag) {
+                        None => {
+                            // Not arrived yet — put the opening tag back and wait
+                            self.buf.insert_str(0, &format!("<{}>", inner));
+                        }
+                        Some(offset) => {
+                            let content = self.buf[..offset].to_string();
+                            self.buf.drain(..offset + end_tag.len());
+                            let plain = strip_tags(&content);
+                            let xml = format!("<{}/>\n", inner); // parse attrs only
+                            let attrs = attrs_from_xml(&xml);
+                            if let Some(ev) = parse_start_tag(tag_name, &attrs, &plain) {
+                                events.push(ev);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Container element — opening tag consumed, children handled naturally
+                }
+            }
+        }
+    }
+}
+
+impl Default for StreamParser {
+    fn default() -> Self { Self::new() }
+}
+
+/// Convenience wrapper for tests: parse a static string as a single feed.
 pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
-    let mut events = Vec::new();
-    let mut reader = Reader::from_str(input);
-    reader.config_mut().trim_text(false);
-    // GemStone XML arrives in fixed-size TCP chunks. A <dialogData> open tag may land
-    // in one chunk and its </dialogData> close tag in the next, so individual chunks
-    // frequently start with an unmatched </dialogData>. Disable end-tag validation so
-    // the parser keeps going instead of aborting at the first unmatched close tag.
-    reader.config_mut().check_end_names = false;
+    StreamParser::new().feed(input)
+}
 
-    let mut current_style: Option<String> = None;
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-    loop {
-        match reader.read_event() {
-            Ok(Event::Empty(ref e)) => {
-                let tag = std::str::from_utf8(e.name().as_ref()).unwrap_or("").to_string();
-                let attrs: Vec<(String, String)> = e
-                    .attributes()
-                    .filter_map(|a| a.ok())
-                    .filter_map(|a| {
-                        let key = std::str::from_utf8(a.key.as_ref()).ok()?.to_string();
-                        let val = a.unescape_value().ok()?.into_owned();
-                        Some((key, val))
-                    })
-                    .collect();
-                if let Some(ev) = parse_empty_tag(&tag, &attrs) {
-                    match &ev {
-                        XmlEvent::StylePush { id } => { current_style = Some(id.clone()); }
-                        XmlEvent::StylePop => { current_style = None; }
-                        XmlEvent::Health { value, max } => {
-                            tracing::info!("progressBar health → value={value} max={max:?}");
-                            events.push(ev);
-                        }
-                        XmlEvent::Mana { value, max } => {
-                            tracing::info!("progressBar mana → value={value} max={max:?}");
-                            events.push(ev);
-                        }
-                        _ => { events.push(ev); }
-                    }
-                } else {
-                    events.push(XmlEvent::Unknown { tag });
-                }
-            }
-            Ok(Event::Start(ref e)) => {
-                let tag = std::str::from_utf8(e.name().as_ref()).unwrap_or("").to_string();
-                let attrs: Vec<(String, String)> = e
-                    .attributes()
-                    .filter_map(|a| a.ok())
-                    .filter_map(|a| {
-                        let key = std::str::from_utf8(a.key.as_ref()).ok()?.to_string();
-                        let val = a.unescape_value().ok()?.into_owned();
-                        Some((key, val))
-                    })
-                    .collect();
-                // Only consume text content for elements we know are text-only containers.
-                // For everything else (e.g. <dialogData>, <container>, <inv>) let the
-                // loop continue so their child elements (like <progressBar/>) are seen.
-                match tag.as_str() {
-                    "prompt" | "component" | "spell" => {
-                        let name = e.name().clone();
-                        let raw = reader.read_text(name).unwrap_or_default();
-                        let text = quick_xml::escape::unescape(raw.as_ref())
-                            .unwrap_or_else(|_| raw.clone())
-                            .into_owned();
-                        if let Some(ev) = parse_start_tag(&tag, &attrs, &text) {
-                            events.push(ev);
-                        }
-                    }
-                    _ => {} // container element — children processed by the loop naturally
-                }
-            }
-            Ok(Event::Text(ref t)) => {
-                let s = t.decode().unwrap_or_default().into_owned();
-                if !s.is_empty() {
-                    // Styled text: <style id="roomName"/> text <style id=""/>
-                    match current_style.as_deref() {
-                        Some("roomName") => {
-                            events.push(XmlEvent::RoomName { name: s });
-                        }
-                        Some("roomDesc") => {
-                            events.push(XmlEvent::RoomDescription { text: s });
-                        }
-                        _ => {
-                            events.push(XmlEvent::Text { content: s });
-                        }
-                    }
-                }
-            }
-            Ok(Event::GeneralRef(ref e)) => {
-                let name = std::str::from_utf8(e.as_ref()).unwrap_or("");
-                let raw = format!("&{};", name);
-                events.push(XmlEvent::Text { content: raw });
-            }
-            Ok(Event::Eof) => break,
-            Err(e) => {
-                tracing::warn!("XML parse error at byte {}: {}", reader.buffer_position(), e);
-                break;
-            }
+/// Find the `>` that closes the tag starting at `start` (which should be `<`),
+/// correctly skipping over quoted attribute values.
+fn find_gt(input: &str, start: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut in_quote: Option<u8> = None;
+    let mut i = start + 1;
+    while i < bytes.len() {
+        match (in_quote, bytes[i]) {
+            (None, b'"')  => in_quote = Some(b'"'),
+            (None, b'\'') => in_quote = Some(b'\''),
+            (Some(q), b) if b == q => in_quote = None,
+            (None, b'>') => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Strip XML tags from `s`, returning plain text (used for element content
+/// that may contain inline markup like `<a>` link tags).
+fn strip_tags(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(c),
             _ => {}
         }
     }
-    events
+    quick_xml::escape::unescape(&result)
+        .map(|c| c.into_owned())
+        .unwrap_or(result)
 }
+
+/// Parse a single self-closing tag XML string and return the event, if any.
+fn parse_empty_xml(xml: &str) -> Option<XmlEvent> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    if let Ok(Event::Empty(ref e)) = reader.read_event() {
+        let tag = std::str::from_utf8(e.name().as_ref()).unwrap_or("").to_string();
+        let attrs = collect_attrs(e);
+        parse_empty_tag(&tag, &attrs)
+    } else {
+        None
+    }
+}
+
+/// Extract attributes from a fake self-closing tag XML string.
+fn attrs_from_xml(xml: &str) -> Attrs {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    if let Ok(Event::Empty(ref e)) = reader.read_event() {
+        collect_attrs(e)
+    } else {
+        Vec::new()
+    }
+}
+
+fn collect_attrs(e: &quick_xml::events::BytesStart<'_>) -> Attrs {
+    e.attributes()
+        .filter_map(|a| a.ok())
+        .filter_map(|a| {
+            let key = std::str::from_utf8(a.key.as_ref()).ok()?.to_string();
+            let val = a.unescape_value().ok()?.into_owned();
+            Some((key, val))
+        })
+        .collect()
+}
+
+fn emit_text(events: &mut Vec<XmlEvent>, s: &str, style: &Option<String>) {
+    if s.is_empty() { return; }
+    match style.as_deref() {
+        Some("roomName") => events.push(XmlEvent::RoomName { name: s.to_string() }),
+        Some("roomDesc") => events.push(XmlEvent::RoomDescription { text: s.to_string() }),
+        _ => events.push(XmlEvent::Text { content: s.to_string() }),
+    }
+}
+
+// ── Tag parsers ───────────────────────────────────────────────────────────────
 
 type Attrs = Vec<(String, String)>;
 
@@ -168,8 +278,6 @@ fn parse_vital(attrs: &Attrs) -> (u32, Option<u32>) {
 
 fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
     match tag {
-        // GemStone sends vitals as <progressBar id="health" text="100/200" value="100"/>
-        // (not as <health .../> — that tag never appears in the live stream)
         "progressBar" => {
             let id = attr(attrs, "id").unwrap_or_default();
             match id.as_str() {
@@ -222,7 +330,6 @@ fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
             Some(XmlEvent::Level { value })
         }
         "nav" => {
-            // room ID comes from <nav rm="123"/>
             let id = attr(attrs, "rm").and_then(|v| v.parse().ok())?;
             Some(XmlEvent::RoomId { id })
         }

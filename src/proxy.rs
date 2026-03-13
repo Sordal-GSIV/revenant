@@ -1,4 +1,4 @@
-use crate::{config::Config, eaccess, game_state::GameState, script_engine::ScriptEngine, xml_parser::parse_chunk};
+use crate::{config::Config, eaccess, game_state::GameState, script_engine::ScriptEngine, xml_parser::StreamParser};
 use anyhow::Result;
 use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -173,6 +173,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
             };
 
             let mut buf = vec![0u8; 4096];
+            let mut parser = StreamParser::new();
             loop {
                 let n = srv_r.read(&mut buf).await?;
                 if n == 0 { break; }
@@ -185,7 +186,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                 }
                 {
                     let mut state = gs.write().unwrap_or_else(|e| e.into_inner());
-                    for event in parse_chunk(&chunk) {
+                    for event in parser.feed(&chunk) {
                         if let crate::xml_parser::XmlEvent::Text { ref content } = event {
                             let mut log = game_log.lock().unwrap();
                             if log.len() >= 2000 { log.pop_front(); }
