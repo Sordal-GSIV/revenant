@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::sync::Arc;
 use tracing::info;
 
 #[tokio::main]
@@ -11,5 +12,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let config = revenant::config::Config::parse();
     info!("Revenant starting — listening on {}", config.listen);
-    revenant::proxy::run(config).await
+
+    let engine = Arc::new(revenant::script_engine::ScriptEngine::new());
+    engine.set_scripts_dir(&config.scripts_dir);
+
+    revenant::proxy::run(config, engine).await
 }

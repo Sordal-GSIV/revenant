@@ -46,8 +46,24 @@ impl ScriptEngine {
     }
 
     pub fn set_game_state(&self, gs: Arc<RwLock<crate::game_state::GameState>>) {
-        *self.game_state.lock().unwrap() = Some(gs);
+        let mut lock = self.game_state.lock().unwrap();
+        if lock.is_some() {
+            tracing::warn!("set_game_state called but game_state is already set — single-client constraint violated");
+        }
+        *lock = Some(gs);
     }
+
+    /// Send a message directly to the client output stream.
+    /// Stub: prints to stdout until the client_tx channel is wired (Task 1).
+    pub fn respond(&self, msg: &str) {
+        println!("{msg}");
+    }
+
+    /// Pause all running scripts. (Implemented in Task 4.)
+    pub fn pause_all(&self) {}
+
+    /// Unpause all running scripts. (Implemented in Task 4.)
+    pub fn unpause_all(&self) {}
 
     pub fn set_scripts_dir(&self, dir: &str) {
         *self.scripts_dir.lock().unwrap() = dir.to_string();
