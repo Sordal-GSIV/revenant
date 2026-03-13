@@ -42,6 +42,11 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
     let mut events = Vec::new();
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
+    // GemStone XML arrives in fixed-size TCP chunks. A <dialogData> open tag may land
+    // in one chunk and its </dialogData> close tag in the next, so individual chunks
+    // frequently start with an unmatched </dialogData>. Disable end-tag validation so
+    // the parser keeps going instead of aborting at the first unmatched close tag.
+    reader.config_mut().check_end_names = false;
 
     let mut current_style: Option<String> = None;
 

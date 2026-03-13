@@ -17,6 +17,15 @@ fn test_parse_max_health_from_text_attribute() {
 }
 
 #[test]
+fn test_parse_chunk_starting_with_close_tag() {
+    // Simulates a TCP chunk that starts mid-dialogData (the open tag was in the previous chunk)
+    let xml = r#"<progressBar id="health" value="100" text="health 34/34"/></dialogData>"#;
+    let events = parse_chunk(xml);
+    assert!(events.iter().any(|e| matches!(e, XmlEvent::Health { value: 34, max: Some(34) })),
+        "Health not found in: {events:?}");
+}
+
+#[test]
 fn test_parse_vitals_inside_dialogdata() {
     // GemStone wraps progressBar tags inside <dialogData> — must not be swallowed
     let xml = r#"<dialogData id='minivitals'><progressBar id="health" value="75" text="health 150/200"/><progressBar id="mana" value="60" text="mana 120/200"/></dialogData>"#;
