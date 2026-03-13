@@ -36,8 +36,8 @@ async fn handle_client(client: TcpStream, config: Config) -> Result<()> {
     srv_w.write_all(b"\n").await?;
 
     let game_state: Arc<RwLock<GameState>> = Arc::new(RwLock::new(GameState::default()));
-    // Broadcast channel: downstream text lines → waiting scripts
-    let (downstream_tx, _) = broadcast::channel::<String>(256);
+    // Broadcast channel: downstream raw bytes → waiting scripts
+    let (downstream_tx, _) = broadcast::channel::<Arc<Vec<u8>>>(256);
     let ds_tx = downstream_tx.clone();
 
     // Downstream: server → client (parse XML, update GameState, run hooks)
@@ -47,15 +47,16 @@ async fn handle_client(client: TcpStream, config: Config) -> Result<()> {
         loop {
             let n = srv_r.read(&mut buf).await?;
             if n == 0 { break; }
-            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+            let raw = buf[..n].to_vec();
+            let chunk = String::from_utf8_lossy(&raw).to_string();
             {
-                let mut state = gs.write().unwrap();
+                let mut state = gs.write().unwrap_or_else(|e| e.into_inner());
                 for event in parse_chunk(&chunk) {
                     state.apply(event);
                 }
             }
             // Broadcast to waiting scripts (ignore if no subscribers)
-            let _ = ds_tx.send(chunk.clone());
+            let _ = ds_tx.send(Arc::new(raw));
             // TODO: run downstream hook chain (Task 9)
             cli_w.write_all(&buf[..n]).await?;
         }
