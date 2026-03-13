@@ -97,7 +97,13 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                         }
                         *id as u32
                     }
-                    LuaValue::Number(id) => *id as u32,
+                    LuaValue::Number(id) => {
+                        let id = *id as u32;
+                        if data.find_room_by_id(id).is_none() {
+                            return Ok(false);
+                        }
+                        id
+                    }
                     LuaValue::String(s) => {
                         let text = s.to_str()?;
                         if let Ok(id) = text.parse::<u32>() { id }
@@ -138,6 +144,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             // Execute each command and wait for prompt
             for cmd in path {
                 let line = format!("{cmd}\n");
+                let mut prompt_received = false;
                 // Subscribe before send (avoids prompt-miss race — same pattern as fput)
                 let mut rx_opt = dtx.lock().unwrap().as_ref().map(|tx| tx.subscribe());
                 // Send — drop the sink lock before any .await
@@ -150,16 +157,23 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                         + tokio::time::Duration::from_secs(10);
                     loop {
                         match tokio::time::timeout_at(deadline, rx.recv()).await {
-                            Err(_) => break,
+                            Err(_) => break, // timed out — prompt_received stays false
                             Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
                             Ok(Err(_)) => break,
                             Ok(Ok(bytes)) => {
                                 if String::from_utf8_lossy(&bytes).contains("<prompt") {
+                                    prompt_received = true;
                                     break;
                                 }
                             }
                         }
                     }
+                } else {
+                    // No downstream channel — can't wait for prompt, assume ok
+                    prompt_received = true;
+                }
+                if !prompt_received {
+                    return Ok(false); // Navigation step timed out
                 }
             }
             Ok(true)
