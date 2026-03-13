@@ -2,6 +2,7 @@ pub mod config;
 pub mod dispatch;
 pub mod eaccess;
 pub mod frontend;
+pub mod game_obj;
 pub mod game_state;
 pub mod hook_chain;
 pub mod proxy;
