@@ -58,6 +58,53 @@ fn main() -> anyhow::Result<()> {
     })
 }
 
+/// Read a Simutronics install directory from the Windows registry.
+///
+/// Matches Lich5 init.rb: reads HKLM\SOFTWARE\WOW6432Node\Simutronics\{STORM32|WIZ32}\Directory
+///
+/// - Native Windows: uses the winreg crate.
+/// - WSL2: invokes reg.exe via Windows interop (/mnt/c/Windows/System32/reg.exe).
+/// - Linux + Wine: invokes `wine reg query`.
+/// - macOS: returns None (Avalon uses a SAL file, no registry needed).
+fn simu_registry_dir(subkey: &str) -> Option<String> {
+    let reg_path = format!("HKLM\\SOFTWARE\\WOW6432Node\\Simutronics\\{subkey}");
+
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let path = format!("SOFTWARE\\WOW6432Node\\Simutronics\\{subkey}");
+        let key = hklm.open_subkey(&path).ok()?;
+        key.get_value::<String, _>("Directory").ok()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let is_wsl2 = std::env::var_os("WSL_DISTRO_NAME").is_some();
+        let (prog, args): (&str, Vec<String>) = if is_wsl2 {
+            ("/mnt/c/Windows/System32/reg.exe",
+             vec!["query".into(), reg_path.clone(), "/v".into(), "Directory".into()])
+        } else {
+            ("wine", vec!["reg".into(), "query".into(), reg_path.clone(),
+                          "/v".into(), "Directory".into()])
+        };
+        let out = std::process::Command::new(prog).args(&args).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        // reg.exe output:  "    Directory    REG_SZ    C:\path\to\dir"
+        for line in text.lines() {
+            let parts: Vec<&str> = line.splitn(4, "REG_SZ").collect();
+            if parts.len() == 2 {
+                let dir = parts[1].trim().to_string();
+                if !dir.is_empty() {
+                    return Some(dir);
+                }
+            }
+        }
+        None
+    }
+}
+
 fn launch_game_client(config: &revenant::config::Config, session: &revenant::eaccess::Session) {
     let listen_port = config.listen.split(':').last()
         .and_then(|p| p.parse::<u16>().ok())
@@ -93,7 +140,19 @@ fn launch_game_client(config: &revenant::config::Config, session: &revenant::eac
     }
 
     let game_code_short = if config.game.starts_with("DR") { "DR" } else { "GS" };
-    let dir = config.custom_launch_dir.as_deref().unwrap_or(".");
+
+    // Resolve game client directory: explicit config → registry → current dir.
+    let reg_subkey = match config.frontend.as_str() {
+        "wizard" => "WIZ32",
+        _ => "STORM32",
+    };
+    let registry_dir = simu_registry_dir(reg_subkey);
+    let dir: String = config.custom_launch_dir
+        .as_deref()
+        .map(|s| s.to_string())
+        .or(registry_dir)
+        .unwrap_or_else(|| ".".to_string());
+    let dir = dir.as_str();
 
     // Custom launch command: substitute %port% and %key%, then split into exe + args.
     if let Some(ref custom) = config.custom_launch {
