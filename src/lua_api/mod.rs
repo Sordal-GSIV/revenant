@@ -1,15 +1,20 @@
-pub mod primitives;
 pub mod game_state;
 pub mod game_obj;
 pub mod hooks;
-pub mod script;
 pub mod map;
+pub mod primitives;
+pub mod script;
 pub mod settings;
 
+use crate::script_engine::ScriptEngine;
 use anyhow::Result;
 
-/// Register all Lua API globals on the given ScriptEngine.
-/// This is a stub — individual API modules will fill this in via later tasks.
-pub fn register_all(_engine: &crate::script_engine::ScriptEngine) -> Result<()> {
+pub fn register_all(engine: &ScriptEngine) -> Result<()> {
+    primitives::register(engine)?;
+    // Additional modules wired in subsequent tasks:
+    // game_state::register(engine)?;
+    // hooks::register(engine)?;
+    // script::register(engine)?;
+    // settings::register(engine)?;
     Ok(())
 }
