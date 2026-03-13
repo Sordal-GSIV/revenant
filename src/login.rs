@@ -54,6 +54,7 @@ pub struct LoginApp {
     acct_tab_password: String,
     acct_tab_game: String,
     acct_tab_status: String,
+    acct_fetching: bool,
 
     // ── Shared credential store ──────────────────────────────────────────
     store: CredentialStore,
@@ -86,6 +87,7 @@ impl LoginApp {
             acct_tab_password: String::new(),
             acct_tab_game: "GS3".to_string(),
             acct_tab_status: String::new(),
+            acct_fetching: false,
             store,
             key,
             result: None,
@@ -134,9 +136,43 @@ impl eframe::App for LoginApp {
                     self.fetch_state = FetchState::Error(e);
                 }
                 (FetchOrigin::Accounts, Ok(chars)) => {
-                    self.fetch_state = FetchState::Done(chars);
+                    self.acct_fetching = false;
+                    let account = self.acct_tab_account.clone();
+                    let game_code = self.acct_tab_game.clone();
+                    let game_name = Self::game_name(&game_code).to_string();
+                    if !account.is_empty() {
+                        let exists = self
+                            .store
+                            .accounts
+                            .iter()
+                            .any(|a| a.account.to_lowercase() == account.to_lowercase());
+                        if !exists {
+                            if let Err(e) =
+                                self.store
+                                    .add_account(&account, &self.acct_tab_password, &self.key)
+                            {
+                                self.error = format!("Failed to save account: {e}");
+                            }
+                        }
+                        for ch in &chars {
+                            self.store
+                                .add_character(&account, &ch.name, &game_code, &game_name);
+                        }
+                        match self.store.save() {
+                            Ok(()) => {
+                                self.acct_tab_status = format!(
+                                    "Saved {} character(s) for '{account}'.",
+                                    chars.len()
+                                );
+                            }
+                            Err(e) => {
+                                self.error = format!("Failed to save: {e}");
+                            }
+                        }
+                    }
                 }
                 (FetchOrigin::Accounts, Err(e)) => {
+                    self.acct_fetching = false;
                     self.acct_tab_status = format!("Error: {e}");
                 }
             }
@@ -387,14 +423,17 @@ impl LoginApp {
                 }
             }
 
-            if ui.button("Fetch & Save Characters").clicked() {
+            if ui
+                .add_enabled(!self.acct_fetching, egui::Button::new("Fetch & Save Characters"))
+                .clicked()
+            {
                 self.acct_tab_status.clear();
                 self.error.clear();
                 let account = self.acct_tab_account.clone();
                 let password = self.acct_tab_password.clone();
                 let game = self.acct_tab_game.clone();
                 let tx = self.fetch_tx.clone();
-                self.fetch_state = FetchState::Fetching;
+                self.acct_fetching = true;
 
                 std::thread::spawn(move || {
                     let rt = match tokio::runtime::Runtime::new() {
@@ -412,48 +451,6 @@ impl LoginApp {
 
         if !self.acct_tab_status.is_empty() {
             ui.colored_label(egui::Color32::GREEN, &self.acct_tab_status.clone());
-        }
-
-        // Handle fetch result in accounts tab context
-        if let FetchState::Done(ref chars) = &self.fetch_state {
-            let chars = chars.clone();
-            let account = self.acct_tab_account.clone();
-            let game_code = self.acct_tab_game.clone();
-            let game_name = Self::game_name(&game_code).to_string();
-
-            // Add account if not already saved
-            if !account.is_empty() {
-                // Ensure account exists in store
-                let exists = self
-                    .store
-                    .accounts
-                    .iter()
-                    .any(|a| a.account.to_lowercase() == account.to_lowercase());
-                if !exists {
-                    if let Err(e) =
-                        self.store
-                            .add_account(&account, &self.acct_tab_password, &self.key)
-                    {
-                        self.error = format!("Failed to save account: {e}");
-                    }
-                }
-                for ch in &chars {
-                    self.store
-                        .add_character(&account, &ch.name, &game_code, &game_name);
-                }
-                match self.store.save() {
-                    Ok(()) => {
-                        self.acct_tab_status = format!(
-                            "Saved {} character(s) for '{account}'.",
-                            chars.len()
-                        );
-                    }
-                    Err(e) => {
-                        self.error = format!("Failed to save: {e}");
-                    }
-                }
-            }
-            self.fetch_state = FetchState::Idle;
         }
 
         ui.add_space(12.0);
