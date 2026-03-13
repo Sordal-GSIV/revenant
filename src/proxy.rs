@@ -157,12 +157,32 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
 
         // Downstream: server → parse XML → hook chain → client_writer
         let mut down_handle = tokio::spawn(async move {
+            // Log raw game stream to /tmp/revenant_stream.log for debugging
+            let mut stream_log: Option<std::fs::File> = {
+                use std::io::Write;
+                match std::fs::OpenOptions::new()
+                    .create(true).write(true).truncate(true)
+                    .open("/tmp/revenant_stream.log")
+                {
+                    Ok(mut f) => {
+                        let _ = writeln!(f, "=== revenant stream log ===");
+                        Some(f)
+                    }
+                    Err(e) => { warn!("Could not open stream log: {e}"); None }
+                }
+            };
+
             let mut buf = vec![0u8; 4096];
             loop {
                 let n = srv_r.read(&mut buf).await?;
                 if n == 0 { break; }
                 let raw = buf[..n].to_vec();
                 let chunk = String::from_utf8_lossy(&raw).to_string();
+
+                if let Some(ref mut f) = stream_log {
+                    use std::io::Write;
+                    let _ = f.write_all(&raw);
+                }
                 {
                     let mut state = gs.write().unwrap_or_else(|e| e.into_inner());
                     for event in parse_chunk(&chunk) {
