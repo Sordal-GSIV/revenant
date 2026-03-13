@@ -134,6 +134,7 @@ impl StreamParser {
                 "component" => {
                     self.current_component = None;
                     self.in_bold = false;
+                    self.current_inv_container = None;
                 }
                 "b" => {
                     self.in_bold = false;
@@ -231,6 +232,7 @@ impl StreamParser {
                         }
                         _ => {
                             self.current_component = Some(id);
+                            self.in_bold = false;
                         }
                     }
                 }

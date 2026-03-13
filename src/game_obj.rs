@@ -143,6 +143,7 @@ impl GameObjRegistry {
         self.left_hand = Some(obj);
     }
 
+    #[allow(dead_code)]
     pub fn new_room_desc(&mut self, id: &str, noun: &str, name: &str) {
         let obj = self.find_or_create(id, noun, name, None, None);
         if let Some(existing) = self.room_desc.iter_mut().find(|o| o.id == id) {
