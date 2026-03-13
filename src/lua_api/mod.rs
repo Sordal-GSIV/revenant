@@ -11,8 +11,9 @@ use anyhow::Result;
 
 pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     primitives::register(engine)?;
-    // Additional modules wired in subsequent tasks:
-    // game_state::register(engine)?;
+    if engine.game_state.lock().unwrap().is_some() {
+        game_state::register(engine)?;
+    }
     // hooks::register(engine)?;
     // script::register(engine)?;
     // settings::register(engine)?;

@@ -30,3 +30,28 @@ async fn test_pause_zero_completes() {
     engine.install_lua_api().unwrap();  // NOT .await — it's sync
     engine.eval_lua("pause(0)").await.unwrap();
 }
+
+#[tokio::test]
+async fn test_gamestate_health_from_lua() {
+    use revenant::game_state::GameState;
+    use std::sync::RwLock;
+    let gs = Arc::new(RwLock::new(GameState::default()));
+    gs.write().unwrap().health = 150;
+    gs.write().unwrap().max_health = 200;
+    let engine = ScriptEngine::new();
+    engine.set_game_state(gs);
+    engine.install_lua_api().unwrap();  // sync, no .await
+    engine.eval_lua("assert(GameState.health == 150)").await.unwrap();
+    engine.eval_lua("assert(GameState.max_health == 200)").await.unwrap();
+}
+
+#[tokio::test]
+async fn test_gamestate_roundtime_fn() {
+    use revenant::game_state::GameState;
+    use std::sync::RwLock;
+    let gs = Arc::new(RwLock::new(GameState::default()));
+    let engine = ScriptEngine::new();
+    engine.set_game_state(gs);
+    engine.install_lua_api().unwrap();  // sync, no .await
+    engine.eval_lua("assert(GameState.roundtime() == 0.0)").await.unwrap();
+}
