@@ -16,5 +16,11 @@ async fn main() -> anyhow::Result<()> {
     let engine = Arc::new(revenant::script_engine::ScriptEngine::new());
     engine.set_scripts_dir(&config.scripts_dir);
 
+    if let Some(ref p) = config.map_path {
+        if let Err(e) = engine.load_map(p) {
+            tracing::warn!("Could not load map from {p}: {e}");
+        }
+    }
+
     revenant::proxy::run(config, engine).await
 }

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use crate::map::MapData;
 use mlua::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -10,6 +11,7 @@ pub struct ScriptEngine {
     pub downstream_tx: Arc<Mutex<Option<tokio::sync::broadcast::Sender<Arc<Vec<u8>>>>>>,
     pub respond_sink: Arc<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>>,
     pub game_state: Arc<Mutex<Option<Arc<RwLock<crate::game_state::GameState>>>>>,
+    pub map_data: Arc<RwLock<Option<MapData>>>,
     pub scripts_dir: Arc<Mutex<String>>,
     pub running: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     pub script_args: Arc<Mutex<HashMap<String, Vec<String>>>>,
@@ -32,6 +34,7 @@ impl ScriptEngine {
             downstream_tx: Arc::new(Mutex::new(None)),
             respond_sink: Arc::new(Mutex::new(None)),
             game_state: Arc::new(Mutex::new(None)),
+            map_data: Arc::new(RwLock::new(None)),
             scripts_dir: Arc::new(Mutex::new("../scripts".to_string())),
             running: Arc::new(Mutex::new(HashMap::new())),
             script_args: Arc::new(Mutex::new(HashMap::new())),
@@ -101,6 +104,12 @@ impl ScriptEngine {
         *self.db.lock().unwrap() = Some(db);
         *self.character.lock().unwrap() = character.to_string();
         *self.game.lock().unwrap() = game.to_string();
+    }
+
+    pub fn load_map(&self, path: &str) -> Result<()> {
+        let data = MapData::from_file(path)?;
+        *self.map_data.write().unwrap_or_else(|e| e.into_inner()) = Some(data);
+        Ok(())
     }
 
     /// Evaluate Lua code string. Used for tests and REPL.

@@ -6,6 +6,44 @@ use revenant::{
 };
 use std::sync::{Arc, Mutex, RwLock};
 
+#[tokio::test]
+async fn test_map_find_room_by_id() {
+    let e = Arc::new(ScriptEngine::new());
+    e.set_upstream_sink(|_| {});
+    let map_json = r#"[{"id":10,"title":"The Bank","wayto":{"11":"go north"},"timeto":{"11":0.2},"paths":[],"tags":["bank"]},
+                       {"id":11,"title":"Market Street","wayto":{"10":"go south"},"timeto":{"10":0.2},"paths":[],"tags":[]}]"#;
+    let map_file = tempfile::NamedTempFile::with_suffix(".json").unwrap();
+    std::fs::write(map_file.path(), map_json).unwrap();
+    e.load_map(map_file.path().to_str().unwrap()).unwrap();
+    e.install_lua_api().unwrap();
+
+    e.eval_lua(r#"
+        local r = Map.find_room(10)
+        assert(r ~= nil, "room 10 should exist")
+        assert(r.id == 10, "id should be 10")
+        assert(r.title == "The Bank", "title mismatch")
+    "#).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_map_find_path() {
+    let e = Arc::new(ScriptEngine::new());
+    e.set_upstream_sink(|_| {});
+    let map_json = r#"[{"id":1,"title":"Start","wayto":{"2":"go north"},"timeto":{"2":0.2},"paths":[],"tags":[]},
+                       {"id":2,"title":"End","wayto":{"1":"go south"},"timeto":{"1":0.2},"paths":[],"tags":[]}]"#;
+    let map_file = tempfile::NamedTempFile::with_suffix(".json").unwrap();
+    std::fs::write(map_file.path(), map_json).unwrap();
+    e.load_map(map_file.path().to_str().unwrap()).unwrap();
+    e.install_lua_api().unwrap();
+
+    e.eval_lua(r#"
+        local path = Map.find_path(1, 2)
+        assert(path ~= nil, "path should exist")
+        assert(#path == 1, "path should have 1 step")
+        assert(path[1] == "go north", "step should be 'go north'")
+    "#).await.unwrap();
+}
+
 const HEALING_SCRIPT: &str = r#"
 DownstreamHook.add("auto_heal", function(line)
     if GameState.health < GameState.max_health * 0.5 then

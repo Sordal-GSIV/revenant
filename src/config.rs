@@ -17,4 +17,6 @@ pub struct Config {
     pub scripts_dir: String,
     #[arg(long, default_value = "revenant.db")]
     pub db_path: String,
+    #[arg(long)]
+    pub map_path: Option<String>,
 }
