@@ -93,47 +93,62 @@ fn launch_game_client(config: &revenant::config::Config, session: &revenant::eac
     }
 
     let game_code_short = if config.game.starts_with("DR") { "DR" } else { "GS" };
-
-    let cmd = if let Some(ref custom) = config.custom_launch {
-        custom.replace("%port%", &listen_port.to_string())
-              .replace("%key%", key)
-    } else {
-        let exe = match config.frontend.as_str() {
-            "wizard" => "Wizard.Exe",
-            _ => "Wrayth.exe",
-        };
-        let host = match config.frontend.as_str() {
-            "wizard" => "127.0.0.1",
-            _ => "localhost",
-        };
-        let args = match config.frontend.as_str() {
-            "wizard" => format!("/G{game_code_short}/H{host} /P{listen_port} /K{key}"),
-            _ => format!("/G{game_code_short}/H{host}/P{listen_port}/K{key}"),
-        };
-        // On Windows or WSL2: run the exe directly via WSL interop / native.
-        // On plain Linux/macOS without interop: prefix with wine.
-        let is_wsl2 = std::env::var_os("WSL_DISTRO_NAME").is_some();
-        if cfg!(target_os = "windows") || is_wsl2 {
-            format!("{exe} {args}")
-        } else {
-            format!("wine {exe} {args}")
-        }
-    };
-
     let dir = config.custom_launch_dir.as_deref().unwrap_or(".");
 
-    tracing::info!("Launching game client: {}", cmd.replace(key.as_str(), "[KEY]"));
-
-    let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
-    if parts.is_empty() { return; }
-
-    let mut command = std::process::Command::new(parts[0]);
-    if parts.len() > 1 {
-        command.args(parts[1].split_whitespace());
+    // Custom launch command: substitute %port% and %key%, then split into exe + args.
+    if let Some(ref custom) = config.custom_launch {
+        let expanded = custom.replace("%port%", &listen_port.to_string())
+                             .replace("%key%", key);
+        tracing::info!("Launching (custom): {}", expanded.replace(key.as_str(), "[KEY]"));
+        let parts: Vec<&str> = expanded.splitn(2, ' ').collect();
+        if parts.is_empty() { return; }
+        let mut command = std::process::Command::new(parts[0]);
+        if parts.len() > 1 { command.args(parts[1].split_whitespace()); }
+        if dir != "." { command.current_dir(dir); }
+        match command.spawn() {
+            Ok(child) => tracing::info!("Game client launched (pid {})", child.id()),
+            Err(e) => tracing::error!("Failed to launch game client: {e}"),
+        }
+        return;
     }
-    if dir != "." {
-        command.current_dir(dir);
-    }
+
+    // Standard launch: build exe path from launch dir + exe name so the exe is
+    // found even when it's not on PATH (typical Windows install scenario).
+    let exe_name = match config.frontend.as_str() {
+        "wizard" => "Wizard.Exe",
+        _ => "Wrayth.exe",
+    };
+    let exe_path = if dir != "." {
+        std::path::Path::new(dir).join(exe_name)
+    } else {
+        std::path::PathBuf::from(exe_name)
+    };
+
+    let host = match config.frontend.as_str() {
+        "wizard" => "127.0.0.1",
+        _ => "localhost",
+    };
+    let args: Vec<String> = match config.frontend.as_str() {
+        "wizard" => vec![format!("/G{game_code_short}/H{host}"),
+                         format!("/P{listen_port}"),
+                         format!("/K{key}")],
+        _ => vec![format!("/G{game_code_short}/H{host}/P{listen_port}/K{key}")],
+    };
+
+    tracing::info!("Launching: {} {}", exe_path.display(),
+        args.iter().map(|a| a.replace(key.as_str(), "[KEY]")).collect::<Vec<_>>().join(" "));
+
+    // On Windows or WSL2 (interop), run the exe directly.
+    // On plain Linux/macOS, prefix with wine.
+    let is_wsl2 = std::env::var_os("WSL_DISTRO_NAME").is_some();
+    let mut command = if cfg!(target_os = "windows") || is_wsl2 {
+        std::process::Command::new(&exe_path)
+    } else {
+        let mut c = std::process::Command::new("wine");
+        c.arg(&exe_path);
+        c
+    };
+    command.args(&args);
 
     match command.spawn() {
         Ok(child) => tracing::info!("Game client launched (pid {})", child.id()),
