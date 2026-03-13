@@ -24,6 +24,9 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     globals.set("pause", lua.create_async_function(move |lua, secs: f64| {
         let paused = paused.clone();
         async move {
+            // NOTE: _REVENANT_SCRIPT is a shared Lua global set on launch. In concurrent-script
+            // scenarios, this may read the wrong name if another script launched between yields.
+            // Race condition accepted for v2; scripts are typically launched sequentially in practice.
             let script_name: String = lua.globals()
                 .get("_REVENANT_SCRIPT").unwrap_or_default();
 
@@ -36,17 +39,20 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
 
             // Normal sleep — check pause every 50ms
             if secs > 0.0 {
-                let deadline = tokio::time::Instant::now()
+                let mut deadline = tokio::time::Instant::now()
                     + tokio::time::Duration::from_secs_f64(secs);
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     let is_paused = paused.lock().unwrap().contains(&script_name);
                     if is_paused {
+                        let pause_start = tokio::time::Instant::now();
                         loop {
                             let still_paused = paused.lock().unwrap().contains(&script_name);
                             if !still_paused { break; }
                             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                         }
+                        // Freeze: extend deadline by the time spent paused
+                        deadline += tokio::time::Instant::now() - pause_start;
                     }
                     if tokio::time::Instant::now() >= deadline { break; }
                 }
