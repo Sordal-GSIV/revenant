@@ -161,8 +161,12 @@ impl ScriptEngine {
                 let msg = e.to_string();
                 tracing::error!("[script:{script_name}] error: {msg}");
                 if let Some(hook) = error_hook.lock().unwrap().as_ref() {
-                    hook(script_name, msg);
+                    hook(script_name.clone(), msg);
                 }
+            }
+            // Clean up args table to avoid unbounded growth
+            if let Ok(globals) = lua.globals().get::<mlua::Table>("_REVENANT_SCRIPT_ARGS") {
+                let _ = globals.raw_remove(script_name.as_str());
             }
         });
 
