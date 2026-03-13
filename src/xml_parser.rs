@@ -62,6 +62,14 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
                     match &ev {
                         XmlEvent::StylePush { id } => { current_style = Some(id.clone()); }
                         XmlEvent::StylePop => { current_style = None; }
+                        XmlEvent::Health { value, max } => {
+                            tracing::info!("progressBar health → value={value} max={max:?}");
+                            events.push(ev);
+                        }
+                        XmlEvent::Mana { value, max } => {
+                            tracing::info!("progressBar mana → value={value} max={max:?}");
+                            events.push(ev);
+                        }
                         _ => { events.push(ev); }
                     }
                 } else {
@@ -120,7 +128,7 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                tracing::debug!("XML parse error (partial chunk): {}", e);
+                tracing::warn!("XML parse error at byte {}: {}", reader.buffer_position(), e);
                 break;
             }
             _ => {}

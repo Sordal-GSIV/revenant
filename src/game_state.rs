@@ -92,7 +92,11 @@ impl GameState {
 
     pub fn apply(&mut self, event: XmlEvent) {
         match event {
-            XmlEvent::Health { value, max }        => { self.health = value;        if let Some(m) = max { self.max_health = m; } }
+            XmlEvent::Health { value, max }        => {
+                tracing::info!("GameState health: {value}/{max:?}");
+                self.health = value;
+                if let Some(m) = max { self.max_health = m; }
+            }
             XmlEvent::Mana { value, max }          => { self.mana = value;          if let Some(m) = max { self.max_mana = m; } }
             XmlEvent::Spirit { value, max }        => { self.spirit = value;        if let Some(m) = max { self.max_spirit = m; } }
             XmlEvent::Stamina { value, max }       => { self.stamina = value;       if let Some(m) = max { self.max_stamina = m; } }
