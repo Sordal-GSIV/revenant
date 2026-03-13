@@ -47,6 +47,7 @@ fn index_key(id: &str, noun: &str, name: &str) -> String {
 }
 
 /// Object category used when creating entries from the XML stream.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjCategory {
     Loot,
@@ -85,14 +86,18 @@ impl GameObjRegistry {
             self.npc_status.insert(id.to_string(), s.to_string());
         }
         let obj = self.find_or_create(id, noun, name, None, None);
-        if !self.npcs.iter().any(|o| o.id == id) {
+        if let Some(existing) = self.npcs.iter_mut().find(|o| o.id == id) {
+            *existing = obj;
+        } else {
             self.npcs.push(obj);
         }
     }
 
     pub fn new_loot(&mut self, id: &str, noun: &str, name: &str) {
         let obj = self.find_or_create(id, noun, name, None, None);
-        if !self.loot.iter().any(|o| o.id == id) {
+        if let Some(existing) = self.loot.iter_mut().find(|o| o.id == id) {
+            *existing = obj;
+        } else {
             self.loot.push(obj);
         }
     }
@@ -102,7 +107,9 @@ impl GameObjRegistry {
             self.pc_status.insert(id.to_string(), s.to_string());
         }
         let obj = self.find_or_create(id, noun, name, None, None);
-        if !self.pcs.iter().any(|o| o.id == id) {
+        if let Some(existing) = self.pcs.iter_mut().find(|o| o.id == id) {
+            *existing = obj;
+        } else {
             self.pcs.push(obj);
         }
     }
@@ -138,7 +145,9 @@ impl GameObjRegistry {
 
     pub fn new_room_desc(&mut self, id: &str, noun: &str, name: &str) {
         let obj = self.find_or_create(id, noun, name, None, None);
-        if !self.room_desc.iter().any(|o| o.id == id) {
+        if let Some(existing) = self.room_desc.iter_mut().find(|o| o.id == id) {
+            *existing = obj;
+        } else {
             self.room_desc.push(obj);
         }
     }

@@ -1,5 +1,4 @@
-#[allow(unused_imports)]
-use revenant::game_obj::{GameObj, GameObjRegistry, ObjCategory};
+use revenant::game_obj::GameObjRegistry;
 
 #[test]
 fn test_new_npc_appears_in_npcs() {
