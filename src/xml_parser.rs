@@ -79,13 +79,21 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
                         Some((key, val))
                     })
                     .collect();
-                let name = e.name().clone();
-                let raw = reader.read_text(name).unwrap_or_default();
-                let text = quick_xml::escape::unescape(raw.as_ref())
-                    .unwrap_or_else(|_| raw.clone())
-                    .into_owned();
-                if let Some(ev) = parse_start_tag(&tag, &attrs, &text) {
-                    events.push(ev);
+                // Only consume text content for elements we know are text-only containers.
+                // For everything else (e.g. <dialogData>, <container>, <inv>) let the
+                // loop continue so their child elements (like <progressBar/>) are seen.
+                match tag.as_str() {
+                    "prompt" | "component" | "spell" => {
+                        let name = e.name().clone();
+                        let raw = reader.read_text(name).unwrap_or_default();
+                        let text = quick_xml::escape::unescape(raw.as_ref())
+                            .unwrap_or_else(|_| raw.clone())
+                            .into_owned();
+                        if let Some(ev) = parse_start_tag(&tag, &attrs, &text) {
+                            events.push(ev);
+                        }
+                    }
+                    _ => {} // container element — children processed by the loop naturally
                 }
             }
             Ok(Event::Text(ref t)) => {

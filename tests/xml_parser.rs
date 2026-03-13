@@ -17,6 +17,17 @@ fn test_parse_max_health_from_text_attribute() {
 }
 
 #[test]
+fn test_parse_vitals_inside_dialogdata() {
+    // GemStone wraps progressBar tags inside <dialogData> — must not be swallowed
+    let xml = r#"<dialogData id='minivitals'><progressBar id="health" value="75" text="health 150/200"/><progressBar id="mana" value="60" text="mana 120/200"/></dialogData>"#;
+    let events = parse_chunk(xml);
+    assert!(events.iter().any(|e| matches!(e, XmlEvent::Health { value: 150, max: Some(200) })),
+        "Health not found in: {events:?}");
+    assert!(events.iter().any(|e| matches!(e, XmlEvent::Mana { value: 120, max: Some(200) })),
+        "Mana not found in: {events:?}");
+}
+
+#[test]
 fn test_parse_style_room_name() {
     let xml = "<style id=\"roomName\"/>The Cobblestone Street<style id=\"\"/>";
     let events = parse_chunk(xml);
