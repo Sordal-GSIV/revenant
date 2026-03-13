@@ -26,7 +26,7 @@
 // - Auth validation: response must match /KEY\t/ (not just absence of "PROBLEM")
 // - Read: sysread(8192) — single packet read, not line-by-line
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -62,6 +62,9 @@ pub struct Session {
 /// Returns raw bytes as a String (may contain non-UTF8; lossy conversion matches Ruby behavior).
 pub fn hash_password(password: &str, key: &str) -> String {
     let key_bytes: Vec<u8> = key.trim().bytes().collect();
+    if key_bytes.is_empty() {
+        return password.to_string();
+    }
     let result: Vec<u8> = password
         .bytes()
         .enumerate()
@@ -276,10 +279,11 @@ fn find_character_id(resp: &str, name: &str) -> Result<String> {
 /// The Ruby code explicitly calls `.downcase` on keys.
 fn parse_session(resp: &str, game: &str, character: &str) -> Result<Session> {
     // Strip "L\tOK\t" prefix — eaccess.rb line 138
-    let body = resp
-        .trim()
-        .trim_start_matches("L\t")
-        .trim_start_matches("OK\t");
+    let trimmed = resp.trim();
+    let body = trimmed
+        .strip_prefix("L\t")
+        .and_then(|s| s.strip_prefix("OK\t"))
+        .ok_or_else(|| anyhow::anyhow!("Unexpected L response format: {resp}"))?;
 
     let mut host = String::new();
     let mut port: u16 = 0;
@@ -290,7 +294,7 @@ fn parse_session(resp: &str, game: &str, character: &str) -> Result<Session> {
             // Keys are lowercased per eaccess.rb line 142
             match k.to_lowercase().as_str() {
                 "gamehost" => host = v.to_string(),
-                "gameport" => port = v.parse().unwrap_or(0),
+                "gameport" => port = v.parse::<u16>().context("invalid gameport in SGE response")?,
                 "key" => key = v.to_string(),
                 _ => {}
             }
