@@ -114,23 +114,25 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         let sink = sink.clone();
         let dtx = dtx.clone();
         async move {
+            // Subscribe to downstream FIRST to avoid missing a <prompt> that arrives
+            // between send and subscribe (subscribe-before-send race fix).
+            let mut rx = match dtx.lock().unwrap().as_ref() {
+                Some(tx) => tx.subscribe(),
+                None => return Ok(()),
+            };
             // Send the command — lock dropped before .await
             let line = if cmd.ends_with('\n') { cmd } else { format!("{cmd}\n") };
             {
                 let guard = sink.lock().unwrap();
                 if let Some(f) = guard.as_ref() { f(line); }
             }
-            // Subscribe to downstream — lock dropped before .await
-            let mut rx = match dtx.lock().unwrap().as_ref() {
-                Some(tx) => tx.subscribe(),
-                None => return Ok(()),
-            };
             let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
             loop {
                 let recv = tokio::time::timeout_at(deadline, rx.recv()).await;
                 match recv {
                     Err(_) => break, // timed out
-                    Ok(Err(_)) => break, // channel error
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue, // fell behind, keep listening
+                    Ok(Err(_)) => break, // Closed
                     Ok(Ok(bytes)) => {
                         let text = String::from_utf8_lossy(&bytes);
                         if text.contains("<prompt") {
