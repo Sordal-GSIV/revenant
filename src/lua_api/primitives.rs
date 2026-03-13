@@ -13,10 +13,16 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(())
     })?)?;
 
-    // respond(text) — echo to client TCP stream
-    let respond_sink = engine.respond_sink.clone();
+    // respond(text) — echo to client TCP stream (also logged to respond_log for monitor)
+    let engine_respond = engine.respond_sink.clone();
+    let respond_log = engine.respond_log.clone();
     globals.set("respond", lua.create_function(move |_, text: String| {
-        if let Some(f) = respond_sink.lock().unwrap().as_ref() {
+        {
+            let mut log = respond_log.lock().unwrap();
+            if log.len() >= 500 { log.pop_front(); }
+            log.push_back(text.clone());
+        }
+        if let Some(f) = engine_respond.lock().unwrap().as_ref() {
             f(format!("<output class=\"mono\">{text}</output>\n"));
         } else {
             println!("[respond] {text}");

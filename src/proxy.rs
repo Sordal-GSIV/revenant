@@ -35,7 +35,10 @@ pub async fn run(config: Config, engine: Arc<ScriptEngine>) -> Result<()> {
 
 async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngine>) -> Result<()> {
     let session = eaccess::authenticate(
-        &config.account, &config.password, &config.game, &config.character,
+        config.account.as_deref().unwrap_or(""),
+        config.password.as_deref().unwrap_or(""),
+        &config.game,
+        config.character.as_deref().unwrap_or(""),
     ).await?;
     info!("Connecting to game server {}:{}", session.host, session.port);
 
@@ -82,6 +85,12 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         // Wire client_tx into engine for respond()
         let client_tx_respond = client_tx.clone();
         engine.set_respond_sink(move |s| { let _ = client_tx_respond.send(s.into_bytes()); });
+
+        // Open database for this character session
+        match crate::db::Db::open(&config.db_path) {
+            Ok(db) => engine.set_db(db, config.character.as_deref().unwrap_or(""), &config.game),
+            Err(e) => tracing::warn!("Failed to open DB at {}: {e}", config.db_path),
+        }
 
         engine.install_lua_api()?;
 
