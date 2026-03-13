@@ -6,13 +6,13 @@ pub struct Config {
     #[arg(long, default_value = "127.0.0.1:4900")]
     pub listen: String,
     #[arg(long)]
-    pub account: String,
+    pub account: Option<String>,
     #[arg(long)]
-    pub password: String,
+    pub password: Option<String>,
     #[arg(long, default_value = "GS3")]
     pub game: String,
     #[arg(long)]
-    pub character: String,
+    pub character: Option<String>,
     #[arg(long, default_value = "../scripts")]
     pub scripts_dir: String,
     #[arg(long, default_value = "revenant.db")]

@@ -12,3 +12,7 @@ pub mod lua_api;
 pub mod map;
 #[cfg(feature = "monitor")]
 pub mod monitor;
+#[cfg(feature = "monitor")]
+pub mod credentials;
+#[cfg(feature = "monitor")]
+pub mod login;

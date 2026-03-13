@@ -147,6 +147,61 @@ where
     Ok(String::from_utf8_lossy(&buf[..n]).trim().to_string())
 }
 
+#[derive(Debug, Clone)]
+pub struct CharacterEntry {
+    pub id: String,
+    pub name: String,
+}
+
+/// Connect to eAccess and return the character list for `game_code`.
+/// Runs K→A→M→F→G→P→C. Does NOT send L (login).
+pub async fn list_characters(
+    account: &str,
+    password: &str,
+    game_code: &str,
+) -> Result<Vec<CharacterEntry>> {
+    let connector = build_tls_connector()?;
+    let tcp = TcpStream::connect((SGE_HOST, SGE_PORT)).await?;
+    let domain = rustls::pki_types::ServerName::try_from(SGE_HOST)?.to_owned();
+    let mut stream = connector.connect(domain, tcp).await?;
+
+    stream.write_all(b"K\n").await?;
+    let key = read_packet(&mut stream).await?;
+    let hash = hash_password(password, &key);
+    stream.write_all(format!("A\t{account}\t{hash}\n").as_bytes()).await?;
+    let auth_resp = read_packet(&mut stream).await?;
+    if !auth_resp.contains("KEY\t") {
+        bail!("SGE auth failed: {auth_resp}");
+    }
+    stream.write_all(b"M\n").await?;
+    let _ = read_packet(&mut stream).await?;
+    stream.write_all(format!("F\t{game_code}\n").as_bytes()).await?;
+    let _ = read_packet(&mut stream).await?;
+    stream.write_all(format!("G\t{game_code}\n").as_bytes()).await?;
+    let _ = read_packet(&mut stream).await?;
+    stream.write_all(format!("P\t{game_code}\n").as_bytes()).await?;
+    let _ = read_packet(&mut stream).await?;
+    stream.write_all(b"C\n").await?;
+    let char_resp = read_packet(&mut stream).await?;
+    parse_character_list(&char_resp)
+}
+
+pub fn parse_character_list(resp: &str) -> Result<Vec<CharacterEntry>> {
+    let parts: Vec<&str> = resp.trim().split('\t').collect();
+    let skip = 5; // C + 4 numeric counts
+    let mut entries = vec![];
+    let mut i = skip;
+    while i + 1 < parts.len() {
+        let id = parts[i].to_string();
+        let name = parts[i + 1].to_string();
+        if !id.is_empty() && !name.is_empty() {
+            entries.push(CharacterEntry { id, name });
+        }
+        i += 2;
+    }
+    Ok(entries)
+}
+
 /// Authenticate with the SGE eAccess server and return session credentials.
 ///
 /// Follows the non-legacy protocol path from eaccess.rb:
