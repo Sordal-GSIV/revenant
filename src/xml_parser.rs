@@ -68,7 +68,10 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
                     })
                     .collect();
                 let name = e.name().clone();
-                let text = reader.read_text(name).unwrap_or_default().into_owned();
+                let raw = reader.read_text(name).unwrap_or_default();
+                let text = quick_xml::escape::unescape(raw.as_ref())
+                    .unwrap_or_else(|_| raw.clone())
+                    .into_owned();
                 if let Some(ev) = parse_start_tag(&tag, &attrs, &text) {
                     events.push(ev);
                 }
@@ -79,10 +82,15 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
                     events.push(XmlEvent::Text { content: s });
                 }
             }
+            Ok(Event::GeneralRef(ref e)) => {
+                // Entity reference in text — forward raw (e.g. "&amp;" -> "&amp;")
+                let name = std::str::from_utf8(e.as_ref()).unwrap_or("");
+                let raw = format!("&{};", name);
+                events.push(XmlEvent::Text { content: raw });
+            }
             Ok(Event::Eof) => break,
-            Err(_) => {
-                // Unparseable chunk — forward as-is to client
-                events.push(XmlEvent::Text { content: input.to_string() });
+            Err(e) => {
+                tracing::debug!("XML parse error (partial chunk): {}", e);
                 break;
             }
             _ => {}
@@ -107,6 +115,8 @@ fn parse_vital(attrs: &Attrs) -> (u32, Option<u32>) {
             let cur: u32 = parts[0].parse().unwrap_or(value);
             let max: u32 = parts[1].parse().unwrap_or(0);
             return (cur, Some(max));
+        } else if parts.len() > 2 {
+            tracing::warn!("parse_vital: unexpected text format {:?}, using value-only", text);
         }
     }
     (value, None)
@@ -182,8 +192,16 @@ fn parse_start_tag(tag: &str, attrs: &Attrs, text: &str) -> Option<XmlEvent> {
             }
         }
         "spell" => {
-            if text.is_empty() { Some(XmlEvent::SpellCleared) }
-            else { Some(XmlEvent::PreparedSpell { name: text.to_string() }) }
+            if attrs.iter().any(|(k, _)| k == "exist") {
+                let duration: Option<u32> = attrs.iter()
+                    .find(|(k, _)| k == "duration")
+                    .and_then(|(_, v)| v.parse().ok());
+                Some(XmlEvent::ActiveSpell { name: text.to_string(), duration })
+            } else if text.is_empty() {
+                Some(XmlEvent::SpellCleared)
+            } else {
+                Some(XmlEvent::PreparedSpell { name: text.to_string() })
+            }
         }
         _ => None,
     }
@@ -193,5 +211,10 @@ fn parse_exits(title: &str) -> Vec<String> {
     title.strip_prefix("Obvious exits: ")
         .or_else(|| title.strip_prefix("Obvious exit: "))
         .map(|s| s.split(", ").map(str::trim).map(String::from).collect())
-        .unwrap_or_default()
+        .unwrap_or_else(|| {
+            if !title.is_empty() {
+                tracing::warn!("parse_exits: unrecognized title format: {:?}", title);
+            }
+            Vec::new()
+        })
 }
