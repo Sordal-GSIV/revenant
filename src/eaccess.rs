@@ -50,6 +50,8 @@ pub struct Session {
     pub key: String,
     pub game: String,
     pub character: String,
+    /// All raw key=value pairs from the L response, used for Avalon SAL file generation.
+    pub raw_fields: Vec<(String, String)>,
 }
 
 /// Hash the SGE password using the server-provided key.
@@ -342,11 +344,14 @@ fn parse_session(resp: &str, game: &str, character: &str) -> Result<Session> {
     let mut host = String::new();
     let mut port: u16 = 0;
     let mut key = String::new();
+    let mut raw_fields: Vec<(String, String)> = Vec::new();
 
     for field in body.split('\t') {
         if let Some((k, v)) = field.split_once('=') {
             // Keys are lowercased per eaccess.rb line 142
-            match k.to_lowercase().as_str() {
+            let k_lower = k.to_lowercase();
+            raw_fields.push((k.to_string(), v.to_string()));
+            match k_lower.as_str() {
                 "gamehost" => host = v.to_string(),
                 "gameport" => port = v.parse::<u16>().context("invalid gameport in SGE response")?,
                 "key" => key = v.to_string(),
@@ -365,5 +370,6 @@ fn parse_session(resp: &str, game: &str, character: &str) -> Result<Session> {
         key,
         game: game.to_string(),
         character: character.to_string(),
+        raw_fields,
     })
 }

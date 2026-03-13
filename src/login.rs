@@ -16,6 +16,7 @@ const GAME_CODES: &[(&str, &str)] = &[
 pub enum Frontend {
     Wrayth,
     Wizard,
+    Avalon,
 }
 
 impl Frontend {
@@ -23,6 +24,7 @@ impl Frontend {
         match self {
             Frontend::Wrayth => "stormfront",
             Frontend::Wizard => "wizard",
+            Frontend::Avalon => "avalon",
         }
     }
 
@@ -30,12 +32,14 @@ impl Frontend {
         match self {
             Frontend::Wrayth => "Wrayth",
             Frontend::Wizard => "Wizard",
+            Frontend::Avalon => "Avalon",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
             "wizard" => Frontend::Wizard,
+            "avalon" => Frontend::Avalon,
             _ => Frontend::Wrayth,
         }
     }
@@ -768,6 +772,7 @@ impl LoginApp {
             ui.label("Frontend:");
             ui.radio_value(&mut self.manual_frontend, Frontend::Wrayth, "Wrayth");
             ui.radio_value(&mut self.manual_frontend, Frontend::Wizard, "Wizard");
+            ui.radio_value(&mut self.manual_frontend, Frontend::Avalon, "Avalon");
         });
 
         ui.checkbox(&mut self.manual_custom_launch_enabled, "Custom launch command");
@@ -1105,6 +1110,7 @@ impl LoginApp {
             ui.label("Frontend:");
             ui.radio_value(&mut self.add_char_frontend, Frontend::Wrayth, "Wrayth");
             ui.radio_value(&mut self.add_char_frontend, Frontend::Wizard, "Wizard");
+            ui.radio_value(&mut self.add_char_frontend, Frontend::Avalon, "Avalon");
         });
 
         ui.checkbox(&mut self.add_char_custom_launch_enabled, "Custom launch command");

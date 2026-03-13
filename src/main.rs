@@ -58,10 +58,39 @@ fn main() -> anyhow::Result<()> {
     })
 }
 
-fn launch_game_client(config: &revenant::config::Config, key: &str) {
+fn launch_game_client(config: &revenant::config::Config, session: &revenant::eaccess::Session) {
     let listen_port = config.listen.split(':').last()
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(4900);
+    let key = &session.key;
+
+    // Avalon on macOS: write a SAL file and open it with the Avalon app.
+    // Matches Lich5 main.rb: launcher_cmd = "open -n -b Avalon \"%1\""
+    // and @launch_data.collect! { |line| line.sub(/GAMEPORT=.../).sub(/GAMEHOST=.../) }
+    #[cfg(target_os = "macos")]
+    if config.frontend == "avalon" {
+        let sal_lines: Vec<String> = session.raw_fields.iter().map(|(k, v)| {
+            let v = if k.to_uppercase() == "GAMEHOST" { "127.0.0.1".to_string() }
+                    else if k.to_uppercase() == "GAMEPORT" { listen_port.to_string() }
+                    else { v.clone() };
+            format!("{k}={v}")
+        }).collect();
+        let sal_content = sal_lines.join("\n");
+        let sal_path = std::env::temp_dir().join(format!("revenant_{}.sal", listen_port));
+        if let Err(e) = std::fs::write(&sal_path, &sal_content) {
+            tracing::error!("Failed to write Avalon SAL file: {e}");
+            return;
+        }
+        tracing::info!("Launching Avalon with SAL: {}", sal_path.display());
+        match std::process::Command::new("open")
+            .args(["-n", "-b", "Avalon", sal_path.to_str().unwrap_or("")])
+            .spawn()
+        {
+            Ok(child) => tracing::info!("Avalon launched (pid {})", child.id()),
+            Err(e) => tracing::error!("Failed to launch Avalon: {e}"),
+        }
+        return;
+    }
 
     let game_code_short = if config.game.starts_with("DR") { "DR" } else { "GS" };
 
@@ -90,7 +119,7 @@ fn launch_game_client(config: &revenant::config::Config, key: &str) {
 
     let dir = config.custom_launch_dir.as_deref().unwrap_or(".");
 
-    tracing::info!("Launching game client: {}", cmd.replace(key, "[KEY]"));
+    tracing::info!("Launching game client: {}", cmd.replace(key.as_str(), "[KEY]"));
 
     let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
     if parts.is_empty() { return; }
@@ -136,7 +165,7 @@ fn run_with_gui(config: revenant::config::Config) -> anyhow::Result<()> {
 
     // Launch game client if we have a pre-obtained session key
     if let Some(ref session) = resolved.session {
-        launch_game_client(&resolved, &session.key);
+        launch_game_client(&resolved, session);
     }
 
     // Spawn proxy in background tokio runtime
