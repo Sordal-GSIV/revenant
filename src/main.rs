@@ -147,11 +147,22 @@ fn launch_game_client(config: &revenant::config::Config, session: &revenant::eac
         _ => "STORM32",
     };
     let registry_dir = simu_registry_dir(reg_subkey);
-    let dir: String = config.custom_launch_dir
+    let raw_dir: String = config.custom_launch_dir
         .as_deref()
         .map(|s| s.to_string())
         .or(registry_dir)
         .unwrap_or_else(|| ".".to_string());
+
+    // On WSL2 the registry returns a Windows path (C:\...).
+    // Convert to the Linux mount path (/mnt/c/...) so Rust can use it.
+    let is_wsl2 = std::env::var_os("WSL_DISTRO_NAME").is_some();
+    let dir: String = if is_wsl2 && raw_dir.len() >= 2 && raw_dir.as_bytes()[1] == b':' {
+        let drive = raw_dir[..1].to_lowercase();
+        let rest = raw_dir[2..].replace('\\', "/");
+        format!("/mnt/{drive}{rest}")
+    } else {
+        raw_dir.replace('\\', "/")
+    };
     let dir = dir.as_str();
 
     // Custom launch command: substitute %port% and %key%, then split into exe + args.
@@ -199,7 +210,6 @@ fn launch_game_client(config: &revenant::config::Config, session: &revenant::eac
 
     // On Windows or WSL2 (interop), run the exe directly.
     // On plain Linux/macOS, prefix with wine.
-    let is_wsl2 = std::env::var_os("WSL_DISTRO_NAME").is_some();
     let mut command = if cfg!(target_os = "windows") || is_wsl2 {
         std::process::Command::new(&exe_path)
     } else {
@@ -208,6 +218,11 @@ fn launch_game_client(config: &revenant::config::Config, session: &revenant::eac
         c
     };
     command.args(&args);
+    // Wrayth/Wizard look for skin files relative to their install directory.
+    // Lich5 does Dir.chdir(custom_launch_dir) before spawn — match that.
+    if dir != "." {
+        command.current_dir(dir);
+    }
 
     match command.spawn() {
         Ok(child) => tracing::info!("Game client launched (pid {})", child.id()),
