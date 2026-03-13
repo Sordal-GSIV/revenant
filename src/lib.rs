@@ -10,3 +10,5 @@ pub mod xml_parser;
 pub mod db;
 pub mod lua_api;
 pub mod map;
+#[cfg(feature = "monitor")]
+pub mod monitor;

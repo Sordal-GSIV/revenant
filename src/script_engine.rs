@@ -24,6 +24,8 @@ pub struct ScriptEngine {
     pub script_error_hook: Arc<Mutex<Option<Box<dyn Fn(String, String) + Send + Sync>>>>,
     /// Set of script names that are currently paused.
     pub paused: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// Ring-buffer of the last 500 respond() messages, for the monitor window.
+    pub respond_log: Arc<Mutex<std::collections::VecDeque<String>>>,
 }
 
 impl ScriptEngine {
@@ -45,6 +47,7 @@ impl ScriptEngine {
             game: Arc::new(Mutex::new("GS3".to_string())),
             script_error_hook: Arc::new(Mutex::new(None)),
             paused: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            respond_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(500))),
         }
     }
 
@@ -77,6 +80,11 @@ impl ScriptEngine {
 
     /// Send a message directly to the client output stream.
     pub fn respond(&self, msg: &str) {
+        {
+            let mut log = self.respond_log.lock().unwrap();
+            if log.len() >= 500 { log.pop_front(); }
+            log.push_back(msg.to_string());
+        }
         if let Some(f) = self.respond_sink.lock().unwrap().as_ref() {
             f(format!("<output class=\"mono\">{msg}</output>\n"));
         } else {

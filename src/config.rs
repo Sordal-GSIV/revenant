@@ -19,4 +19,6 @@ pub struct Config {
     pub db_path: String,
     #[arg(long)]
     pub map_path: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub monitor: bool,
 }
