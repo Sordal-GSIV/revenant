@@ -17,6 +17,8 @@ pub struct ScriptEngine {
     pub db: Arc<Mutex<Option<crate::db::Db>>>,
     pub character: Arc<Mutex<String>>,
     pub game: Arc<Mutex<String>>,
+    /// Optional hook called when a script exits with an error. Used in tests.
+    pub script_error_hook: Arc<Mutex<Option<Box<dyn Fn(String, String) + Send + Sync>>>>,
 }
 
 impl ScriptEngine {
@@ -34,7 +36,15 @@ impl ScriptEngine {
             db: Arc::new(Mutex::new(None)),
             character: Arc::new(Mutex::new(String::new())),
             game: Arc::new(Mutex::new("GS3".to_string())),
+            script_error_hook: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Register a callback invoked when a script exits with an error.
+    /// Signature: `fn(script_name: String, error_message: String)`.
+    /// Primarily used in tests to surface Lua assertion failures.
+    pub fn set_script_error_hook<F: Fn(String, String) + Send + Sync + 'static>(&self, f: F) {
+        *self.script_error_hook.lock().unwrap() = Some(Box::new(f));
     }
 
     pub fn set_upstream_sink<F: Fn(String) + Send + Sync + 'static>(&self, f: F) {
@@ -117,8 +127,29 @@ impl ScriptEngine {
         let lua = self.lua.clone();
         let script_name = name.to_string();
 
-        self.script_args.lock().unwrap().insert(name.to_string(), args);
+        // Store args in Rust-side map
+        self.script_args.lock().unwrap().insert(name.to_string(), args.clone());
 
+        // Inject globals before launch
+        {
+            let globals = lua.globals();
+            globals.set("_REVENANT_SCRIPT", name)
+                .map_err(|e| anyhow::anyhow!("lua globals: {e}"))?;
+            let args_table = lua.create_table()
+                .map_err(|e| anyhow::anyhow!("lua table: {e}"))?;
+            for (i, a) in args.iter().enumerate() {
+                args_table.raw_set(i as i64, a.as_str())
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            let all_args: mlua::Table = globals.get("_REVENANT_SCRIPT_ARGS")
+                .unwrap_or_else(|_| lua.create_table().unwrap());
+            all_args.set(name, args_table)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            globals.set("_REVENANT_SCRIPT_ARGS", all_args)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+
+        let error_hook = self.script_error_hook.clone();
         let handle = tokio::spawn(async move {
             let result: LuaResult<()> = async {
                 let func: LuaFunction = lua.load(&code).set_name(&script_name).into_function()?;
@@ -127,7 +158,11 @@ impl ScriptEngine {
                 Ok(())
             }.await;
             if let Err(e) = result {
-                tracing::error!("[script:{script_name}] error: {e}");
+                let msg = e.to_string();
+                tracing::error!("[script:{script_name}] error: {msg}");
+                if let Some(hook) = error_hook.lock().unwrap().as_ref() {
+                    hook(script_name, msg);
+                }
             }
         });
 
