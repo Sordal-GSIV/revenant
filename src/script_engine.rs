@@ -17,6 +17,7 @@ pub struct ScriptEngine {
     pub db: Arc<Mutex<Option<crate::db::Db>>>,
     pub character: Arc<Mutex<String>>,
     pub game: Arc<Mutex<String>>,
+    pub paused: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl ScriptEngine {
@@ -34,6 +35,7 @@ impl ScriptEngine {
             db: Arc::new(Mutex::new(None)),
             character: Arc::new(Mutex::new(String::new())),
             game: Arc::new(Mutex::new("GS3".to_string())),
+            paused: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -80,14 +82,40 @@ impl ScriptEngine {
         if let Some(h) = handle { h.abort(); }
     }
 
+    pub fn pause_script(&self, name: &str) {
+        self.paused.lock().unwrap().insert(name.to_string());
+    }
+
+    pub fn unpause_script(&self, name: &str) {
+        self.paused.lock().unwrap().remove(name);
+    }
+
+    pub fn pause_all(&self) {
+        let names: Vec<String> = self.running.lock().unwrap().keys().cloned().collect();
+        let mut p = self.paused.lock().unwrap();
+        for n in names { p.insert(n); }
+    }
+
+    pub fn unpause_all(&self) {
+        self.paused.lock().unwrap().clear();
+    }
+
     /// Launch a named script from a file path as a tokio task.
-    pub fn start_script(&self, name: &str, path: &str) -> Result<()> {
+    /// `args` are passed to the script as the `Script.args` global (joined by space).
+    pub fn start_script(&self, name: &str, path: &str, args: Vec<String>) -> Result<()> {
         let code = std::fs::read_to_string(path)?;
         let lua = self.lua.clone();
         let script_name = name.to_string();
+        let args_str = args.join(" ");
+
+        // Set _REVENANT_SCRIPT so the pause() implementation can identify the current script
+        lua.globals().set("_REVENANT_SCRIPT", script_name.clone())?;
+        lua.globals().set("_REVENANT_SCRIPT_ARGS", args_str)?;
 
         let handle = tokio::spawn(async move {
             let result: LuaResult<()> = async {
+                // Set per-coroutine script name inside the async block (single-threaded Lua)
+                lua.globals().set("_REVENANT_SCRIPT", script_name.clone())?;
                 let func: LuaFunction = lua.load(&code).set_name(&script_name).into_function()?;
                 let thread = lua.create_thread(func)?;
                 thread.into_async::<mlua::MultiValue>(mlua::MultiValue::new()).await?;

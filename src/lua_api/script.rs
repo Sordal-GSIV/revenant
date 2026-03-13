@@ -33,6 +33,20 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(out)
     })?)?;
 
+    // Script.pause(name) — pause a running script
+    let paused = engine.paused.clone();
+    t.set("pause", lua.create_function(move |_, name: String| {
+        paused.lock().unwrap().insert(name);
+        Ok(())
+    })?)?;
+
+    // Script.unpause(name) — resume a paused script
+    let paused = engine.paused.clone();
+    t.set("unpause", lua.create_function(move |_, name: String| {
+        paused.lock().unwrap().remove(&name);
+        Ok(())
+    })?)?;
+
     // Script.args — empty string by default; per-script args set before launch
     // In v1, args are passed as a string set before starting the script
     t.set("args", "")?;

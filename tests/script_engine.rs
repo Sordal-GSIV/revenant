@@ -114,7 +114,7 @@ async fn test_script_run_and_kill() {
     std::fs::write(tmp.path(), "pause(9999)").unwrap();
 
     engine.install_lua_api().unwrap();  // sync, no .await
-    engine.start_script("s", tmp.path().to_str().unwrap()).unwrap();
+    engine.start_script("s", tmp.path().to_str().unwrap(), vec![]).unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     assert!(engine.is_running("s"), "script should be running");
     engine.kill_script("s").await;
@@ -128,7 +128,7 @@ async fn test_script_kill_from_lua() {
     std::fs::write(tmp.path(), "pause(9999)").unwrap();
 
     engine.install_lua_api().unwrap();
-    engine.start_script("lua_kill_test", tmp.path().to_str().unwrap()).unwrap();
+    engine.start_script("lua_kill_test", tmp.path().to_str().unwrap(), vec![]).unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     assert!(engine.is_running("lua_kill_test"));
 

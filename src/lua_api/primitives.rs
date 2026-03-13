@@ -19,12 +19,42 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(())
     })?)?;
 
-    // pause(seconds) — async sleep
-    globals.set("pause", lua.create_async_function(|_, secs: f64| async move {
-        if secs > 0.0 {
-            tokio::time::sleep(tokio::time::Duration::from_secs_f64(secs)).await;
+    // pause(seconds) — async sleep, respects pause_script()
+    let paused = engine.paused.clone();
+    globals.set("pause", lua.create_async_function(move |lua, secs: f64| {
+        let paused = paused.clone();
+        async move {
+            let script_name: String = lua.globals()
+                .get("_REVENANT_SCRIPT").unwrap_or_default();
+
+            // If already paused: loop in 0.1s increments until unpaused
+            loop {
+                let is_paused = paused.lock().unwrap().contains(&script_name);
+                if !is_paused { break; }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+
+            // Normal sleep — check pause every 50ms slice
+            if secs > 0.0 {
+                let deadline = tokio::time::Instant::now()
+                    + tokio::time::Duration::from_secs_f64(secs);
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    // Re-check pause between sleep slices
+                    let is_paused = paused.lock().unwrap().contains(&script_name);
+                    if is_paused {
+                        // Pause mid-sleep: drain remainder after unpause
+                        loop {
+                            let still_paused = paused.lock().unwrap().contains(&script_name);
+                            if !still_paused { break; }
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        }
+                    }
+                    if tokio::time::Instant::now() >= deadline { break; }
+                }
+            }
+            Ok(())
         }
-        Ok(())
     })?)?;
 
     // waitfor(pattern [, timeout_secs]) — block coroutine until pattern appears downstream
