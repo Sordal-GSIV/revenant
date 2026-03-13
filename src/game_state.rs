@@ -1,4 +1,5 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use crate::xml_parser::XmlEvent;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Game { #[default] GemStone, DragonRealms }
@@ -88,4 +89,52 @@ impl GameState {
             None => 0.0,
         }
     }
+
+    pub fn apply(&mut self, event: XmlEvent) {
+        match event {
+            XmlEvent::Health { value, max }        => { self.health = value;        if let Some(m) = max { self.max_health = m; } }
+            XmlEvent::Mana { value, max }          => { self.mana = value;          if let Some(m) = max { self.max_mana = m; } }
+            XmlEvent::Spirit { value, max }        => { self.spirit = value;        if let Some(m) = max { self.max_spirit = m; } }
+            XmlEvent::Stamina { value, max }       => { self.stamina = value;       if let Some(m) = max { self.max_stamina = m; } }
+            XmlEvent::Concentration { value, max } => { self.concentration = value; if let Some(m) = max { self.max_concentration = m; } }
+            XmlEvent::RoundTime { end_epoch }      => self.roundtime_end = epoch_to_instant(end_epoch),
+            XmlEvent::CastTime { end_epoch }       => self.cast_roundtime_end = epoch_to_instant(end_epoch),
+            XmlEvent::Prompt { time, text }        => { self.server_time = time; self.prompt = text; }
+            XmlEvent::RoomName { name }            => self.room_name = name,
+            XmlEvent::RoomDescription { text }     => self.room_description = text,
+            XmlEvent::RoomExits { exits }          => self.room_exits = exits,
+            XmlEvent::RoomId { id }                => self.room_id = Some(id),
+            XmlEvent::PreparedSpell { name }       => self.prepared_spell = Some(name),
+            XmlEvent::SpellCleared                 => self.prepared_spell = None,
+            XmlEvent::Level { value }              => self.level = value,
+            XmlEvent::RightHand { item }           => self.right_hand = item,
+            XmlEvent::LeftHand { item }            => self.left_hand = item,
+            XmlEvent::Mode { room_id, .. }         => { if let Some(id) = room_id { self.room_id = Some(id); } }
+            XmlEvent::Indicator { name, visible }  => match name.as_str() {
+                "IconBLEEDING" => self.bleeding = visible,
+                "IconSTUNNED"  => self.stunned = visible,
+                "IconDEAD"     => self.dead = visible,
+                "IconSLEEPING" => self.sleeping = visible,
+                "IconPRONE"    => self.prone = visible,
+                "IconSITTING"  => self.sitting = visible,
+                "IconKNEELING" => self.kneeling = visible,
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+/// Convert a Unix epoch i64 to an Instant offset from now.
+/// Returns None if the epoch is in the past.
+/// Note: mixes SystemTime (for epoch math) and Instant (monotonic). NTP adjustments
+/// can cause small drift; acceptable for v1 roundtime display.
+fn epoch_to_instant(epoch: i64) -> Option<Instant> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    let delta = epoch - now_epoch;
+    if delta <= 0 { None } else { Some(Instant::now() + Duration::from_secs(delta as u64)) }
 }
