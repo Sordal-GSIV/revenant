@@ -14,6 +14,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     game_state::register(engine)?;
     hooks::register(engine)?;
     map::register(engine).map_err(|e| anyhow::anyhow!("map register: {e}"))?;
+    game_obj::register(engine).map_err(|e| anyhow::anyhow!("game_obj register: {e}"))?;
     script::register(engine)?;
     settings::register(engine)?;
     Ok(())
