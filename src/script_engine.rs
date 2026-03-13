@@ -14,6 +14,9 @@ pub struct ScriptEngine {
     pub script_args: Arc<Mutex<HashMap<String, String>>>,
     pub downstream_hooks: Arc<Mutex<crate::hook_chain::HookChain>>,
     pub upstream_hooks: Arc<Mutex<crate::hook_chain::HookChain>>,
+    pub db: Arc<Mutex<Option<crate::db::Db>>>,
+    pub character: Arc<Mutex<String>>,
+    pub game: Arc<Mutex<String>>,
 }
 
 impl ScriptEngine {
@@ -28,6 +31,9 @@ impl ScriptEngine {
             script_args: Arc::new(Mutex::new(HashMap::new())),
             downstream_hooks: Arc::new(Mutex::new(crate::hook_chain::HookChain::new())),
             upstream_hooks: Arc::new(Mutex::new(crate::hook_chain::HookChain::new())),
+            db: Arc::new(Mutex::new(None)),
+            character: Arc::new(Mutex::new(String::new())),
+            game: Arc::new(Mutex::new("GS3".to_string())),
         }
     }
 
@@ -45,6 +51,12 @@ impl ScriptEngine {
 
     pub fn set_scripts_dir(&self, dir: &str) {
         *self.scripts_dir.lock().unwrap() = dir.to_string();
+    }
+
+    pub fn set_db(&self, db: crate::db::Db, character: &str, game: &str) {
+        *self.db.lock().unwrap() = Some(db);
+        *self.character.lock().unwrap() = character.to_string();
+        *self.game.lock().unwrap() = game.to_string();
     }
 
     /// Evaluate Lua code string. Used for tests and REPL.

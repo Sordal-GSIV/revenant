@@ -2,6 +2,21 @@ use revenant::script_engine::ScriptEngine;
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
+async fn test_char_settings_roundtrip_from_lua() {
+    use revenant::db::Db;
+    let engine = ScriptEngine::new();
+    engine.set_db(Db::open(":memory:").unwrap(), "TestChar", "GS3");
+    engine.install_lua_api().unwrap();  // sync, no .await
+
+    // String value
+    engine.eval_lua(r#"CharSettings["autoloot"] = "true""#).await.unwrap();
+    engine.eval_lua(r#"assert(CharSettings["autoloot"] == "true")"#).await.unwrap();
+
+    // Missing key returns nil (not empty string)
+    engine.eval_lua(r#"assert(CharSettings["nonexistent"] == nil)"#).await.unwrap();
+}
+
+#[tokio::test]
 async fn test_engine_executes_simple_lua() {
     let engine = ScriptEngine::new();
     engine.eval_lua("assert(1 + 1 == 2)").await.unwrap();
