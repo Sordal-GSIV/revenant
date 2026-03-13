@@ -110,11 +110,14 @@ fn launch_game_client(config: &revenant::config::Config, session: &revenant::eac
             "wizard" => format!("/G{game_code_short}/H{host} /P{listen_port} /K{key}"),
             _ => format!("/G{game_code_short}/H{host}/P{listen_port}/K{key}"),
         };
-        // On Windows run the exe directly; on Linux/WSL2 use wine
-        #[cfg(target_os = "windows")]
-        { format!("{exe} {args}") }
-        #[cfg(not(target_os = "windows"))]
-        { format!("wine {exe} {args}") }
+        // On Windows or WSL2: run the exe directly via WSL interop / native.
+        // On plain Linux/macOS without interop: prefix with wine.
+        let is_wsl2 = std::env::var_os("WSL_DISTRO_NAME").is_some();
+        if cfg!(target_os = "windows") || is_wsl2 {
+            format!("{exe} {args}")
+        } else {
+            format!("wine {exe} {args}")
+        }
     };
 
     let dir = config.custom_launch_dir.as_deref().unwrap_or(".");
