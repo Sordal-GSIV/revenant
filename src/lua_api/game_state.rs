@@ -16,6 +16,11 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(gs.read().unwrap().roundtime())
     })?)?;
 
+    let gs = gs_arc.clone();
+    gs_table.set("cast_roundtime", lua.create_function(move |_, ()| {
+        Ok(gs.read().unwrap().cast_roundtime())
+    })?)?;
+
     // All other fields via __index metamethod
     let gs = gs_arc.clone();
     let mt = lua.create_table()?;
@@ -35,6 +40,8 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             "dead"          => Ok(LuaValue::Boolean(gs.dead)),
             "sleeping"      => Ok(LuaValue::Boolean(gs.sleeping)),
             "prone"         => Ok(LuaValue::Boolean(gs.prone)),
+            "sitting"       => Ok(LuaValue::Boolean(gs.sitting)),
+            "kneeling"      => Ok(LuaValue::Boolean(gs.kneeling)),
             "room_name"     => Ok(LuaValue::String(lua.create_string(&gs.room_name)?)),
             "prompt"        => Ok(LuaValue::String(lua.create_string(&gs.prompt)?)),
             "level"         => Ok(LuaValue::Integer(gs.level as i64)),
