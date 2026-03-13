@@ -33,6 +33,31 @@ pub async fn run(config: Config, engine: Arc<ScriptEngine>) -> Result<()> {
     }
 }
 
+/// Read one `\n`-terminated line from `r` during the login handshake.
+/// Returns the line including the newline character.
+async fn read_handshake_line<R>(r: &mut R) -> Result<String>
+where
+    R: AsyncReadExt + Unpin,
+{
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        let n = r.read(&mut byte).await?;
+        if n == 0 {
+            anyhow::bail!("connection closed during handshake");
+        }
+        line.push(byte[0]);
+        if byte[0] == b'\n' {
+            break;
+        }
+    }
+    Ok(String::from_utf8_lossy(&line).into_owned())
+}
+
+/// Version string sent to the game server during handshake.
+/// Matches Lich5 front-end.rb: Frontend::CLIENT_STRING
+const CLIENT_STRING: &str = "/FE:WRAYTH /VERSION:1.0.1.28 /P:WIN_UNKNOWN /XML";
+
 async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngine>) -> Result<()> {
     let session = if let Some(s) = config.session.clone() {
         s
@@ -50,18 +75,37 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
     let (mut srv_r, srv_w) = server.into_split();
     let (mut cli_r, cli_w) = client.into_split();
 
-    // Send session key to game server
     {
-        // We need a temporary write to srv_w for the handshake before handing it
-        // to sink_drain. Use a one-shot mpsc to deliver the key write first.
-        // Simpler: reconstruct via into_split after sending; but WriteHalf doesn't
-        // implement reunite without the ReadHalf. Instead, send the key via the
-        // upstream channel as the very first message, tagged before the task starts.
-        // Actually: just send directly here before spawning sink_drain.
-        // We own srv_w exclusively here, so write the key then move it to the task.
         let mut srv_w = srv_w; // rebind as mutable
-        srv_w.write_all(session.key.as_bytes()).await?;
-        srv_w.write_all(b"\n").await?;
+
+        // Handshake — matches Lich5 main.rb supports_gsl? branch:
+        //
+        //   client_string = $_CLIENT_.gets   # read key from client
+        //   Game._puts(client_string)         # forward to game server
+        //   $_CLIENT_.gets                    # read version string from client (discard)
+        //   Frontend.send_handshake(CLIENT_STRING)  # send our version + setup commands
+        //
+        // Step 1: read key from client (Wrayth sends /K{key} it got from the command line)
+        let key_line = read_handshake_line(&mut cli_r).await?;
+        srv_w.write_all(key_line.as_bytes()).await?;
+
+        // Step 2: read client's version string and discard it
+        let _client_version = read_handshake_line(&mut cli_r).await?;
+
+        // Step 3: send our version string + setup commands (Frontend.send_handshake)
+        //   - CLIENT_STRING   → tells server we're Wrayth with XML support
+        //   - <c> × 2        → ready signals (with 300ms delay matching Lich5)
+        //   - <c>_injury 2   → send detailed injury/scar data
+        //   - <c>_flag Display Inventory Boxes 1
+        //   - <c>_flag Display Dialog Boxes 0
+        srv_w.write_all(format!("{CLIENT_STRING}\n").as_bytes()).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        srv_w.write_all(b"<c>\n").await?;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        srv_w.write_all(b"<c>\n").await?;
+        srv_w.write_all(b"<c>_injury 2\n").await?;
+        srv_w.write_all(b"<c>_flag Display Inventory Boxes 1\n").await?;
+        srv_w.write_all(b"<c>_flag Display Dialog Boxes 0\n").await?;
 
         let game_state: Arc<RwLock<GameState>> = Arc::new(RwLock::new(GameState::default()));
 
