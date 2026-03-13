@@ -153,6 +153,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let client_tx_down = client_tx.clone();
         let ds_hooks = engine.downstream_hooks.clone();
         let ds_lua = engine.lua.clone();
+        let game_log = engine.game_log.clone();
 
         // Downstream: server → parse XML → hook chain → client_writer
         let mut down_handle = tokio::spawn(async move {
@@ -165,6 +166,11 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                 {
                     let mut state = gs.write().unwrap_or_else(|e| e.into_inner());
                     for event in parse_chunk(&chunk) {
+                        if let crate::xml_parser::XmlEvent::Text { ref content } = event {
+                            let mut log = game_log.lock().unwrap();
+                            if log.len() >= 2000 { log.pop_front(); }
+                            log.push_back(content.clone());
+                        }
                         state.apply(event);
                     }
                 }

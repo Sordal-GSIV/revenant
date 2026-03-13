@@ -116,16 +116,22 @@ impl eframe::App for MonitorApp {
             }
         });
 
-        // ── Main area: respond() log ──────────────────────────────────────
+        // ── Main area: game text + respond() log ─────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Output");
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    let snapshot: Vec<String> = self.engine.respond_log.lock().unwrap().iter().cloned().collect();
-                    for line in &snapshot {
+                    let game: Vec<String> = self.engine.game_log.lock().unwrap().iter().cloned().collect();
+                    let respond: Vec<String> = self.engine.respond_log.lock().unwrap().iter().cloned().collect();
+                    for line in &game {
                         ui.monospace(line.as_str());
+                    }
+                    for line in &respond {
+                        ui.monospace(
+                            egui::RichText::new(line.as_str())
+                                .color(egui::Color32::from_rgb(100, 220, 100))
+                        );
                     }
                 });
         });

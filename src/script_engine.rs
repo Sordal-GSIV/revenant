@@ -26,6 +26,8 @@ pub struct ScriptEngine {
     pub paused: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Ring-buffer of the last 500 respond() messages, for the monitor window.
     pub respond_log: Arc<Mutex<std::collections::VecDeque<String>>>,
+    /// Ring-buffer of the last 2000 lines of game text (XmlEvent::Text), for the monitor window.
+    pub game_log: Arc<Mutex<std::collections::VecDeque<String>>>,
 }
 
 impl ScriptEngine {
@@ -48,6 +50,7 @@ impl ScriptEngine {
             script_error_hook: Arc::new(Mutex::new(None)),
             paused: Arc::new(Mutex::new(std::collections::HashSet::new())),
             respond_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(500))),
+            game_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(2000))),
         }
     }
 
