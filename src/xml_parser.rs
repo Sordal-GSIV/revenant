@@ -127,18 +127,19 @@ fn attr(attrs: &Attrs, name: &str) -> Option<String> {
     attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
 }
 
-/// Parse "current/max" from the text attribute (e.g. "150/200").
-/// Returns (value, max). Falls back to value attribute if text has no slash.
+/// Parse "current/max" from the text attribute.
+/// GemStone sends e.g. `text="health 150/200"` — the stat name prefix must be stripped.
+/// Matches Lich5's `attributes['text'].scan(/-?\d+/)`: extract the first two integers.
 fn parse_vital(attrs: &Attrs) -> (u32, Option<u32>) {
     let value: u32 = attr(attrs, "value").and_then(|v| v.parse().ok()).unwrap_or(0);
     if let Some(text) = attr(attrs, "text") {
-        let parts: Vec<&str> = text.split('/').collect();
-        if parts.len() == 2 {
-            let cur: u32 = parts[0].parse().unwrap_or(value);
-            let max: u32 = parts[1].parse().unwrap_or(0);
+        // Skip any non-numeric prefix (e.g. "health "), then split on '/'
+        let numeric = text.trim_start_matches(|c: char| !c.is_ascii_digit());
+        let parts: Vec<&str> = numeric.split('/').collect();
+        if parts.len() >= 2 {
+            let cur: u32 = parts[0].trim().parse().unwrap_or(value);
+            let max: u32 = parts[1].trim().parse().unwrap_or(0);
             return (cur, Some(max));
-        } else {
-            tracing::warn!("parse_vital: unexpected text format {:?}, using value-only", text);
         }
     }
     (value, None)

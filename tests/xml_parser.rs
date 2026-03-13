@@ -10,7 +10,8 @@ fn test_parse_health_tag() {
 
 #[test]
 fn test_parse_max_health_from_text_attribute() {
-    let xml = r#"<progressBar id="health" value="150" text="150/200"/>"#;
+    // GemStone includes the stat name prefix: "health 150/200"
+    let xml = r#"<progressBar id="health" value="150" text="health 150/200"/>"#;
     let events = parse_chunk(xml);
     assert!(events.iter().any(|e| matches!(e, XmlEvent::Health { value: 150, max: Some(200) })));
 }
