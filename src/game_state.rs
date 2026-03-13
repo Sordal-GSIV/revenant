@@ -120,6 +120,12 @@ impl GameState {
                 "IconKNEELING" => self.kneeling = visible,
                 _ => {}
             },
+            XmlEvent::ActiveSpell { name, duration } => {
+                self.active_spells.push(ActiveSpell {
+                    name,
+                    duration_secs: duration,
+                });
+            }
             _ => {}
         }
     }

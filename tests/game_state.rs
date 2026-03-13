@@ -68,3 +68,22 @@ fn test_apply_indicator_bleeding() {
     gs.apply(XmlEvent::Indicator { name: "IconBLEEDING".into(), visible: false });
     assert!(!gs.bleeding);
 }
+
+#[test]
+fn test_apply_prepared_spell_and_clear() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::PreparedSpell { name: "Spirit Shield".into() });
+    assert_eq!(gs.prepared_spell, Some("Spirit Shield".to_string()));
+    gs.apply(XmlEvent::SpellCleared);
+    assert!(gs.prepared_spell.is_none());
+}
+
+#[test]
+fn test_apply_mode_sets_room_id() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Mode { id: "GAME".into(), room_id: Some(42) });
+    assert_eq!(gs.room_id, Some(42));
+    // Mode with no room_id should not clear the existing room_id
+    gs.apply(XmlEvent::Mode { id: "GAME".into(), room_id: None });
+    assert_eq!(gs.room_id, Some(42));
+}
