@@ -27,11 +27,9 @@
 // - Read: sysread(8192) — single packet read, not line-by-line
 
 use anyhow::{bail, Context, Result};
-use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_rustls::rustls;
-use tokio_rustls::TlsConnector;
+use tokio_native_tls::TlsConnector;
 use tracing::debug;
 
 /// eAccess server hostname.
@@ -78,58 +76,17 @@ pub fn hash_password(password: &str, key: &str) -> String {
     String::from_utf8_lossy(&result).into_owned()
 }
 
-/// TLS certificate verifier that accepts any certificate.
-///
-/// The Ruby reference uses a downloaded self-signed PEM and VERIFY_PEER against it.
-/// For simplicity we accept any cert here; this is equivalent to what Lich does
-/// when the PEM is absent (it downloads on first connect without prior verification).
-#[derive(Debug)]
-struct AcceptAnyCert;
-
-impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
 /// Build a TLS connector that accepts any server certificate.
+///
+/// Uses native-tls (OpenSSL on Linux, SChannel on Windows, SecureTransport on macOS)
+/// for maximum cipher-suite compatibility with the SGE eAccess server, matching
+/// the Ruby/OpenSSL transport used by the reference implementation.
 fn build_tls_connector() -> Result<TlsConnector> {
-    let config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
-        .with_no_client_auth();
-    Ok(TlsConnector::from(Arc::new(config)))
+    let native = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()?;
+    Ok(TlsConnector::from(native))
 }
 
 /// Read a single packet from the TLS stream (up to PACKET_SIZE bytes).
@@ -163,8 +120,7 @@ pub async fn list_characters(
 ) -> Result<Vec<CharacterEntry>> {
     let connector = build_tls_connector()?;
     let tcp = TcpStream::connect((SGE_HOST, SGE_PORT)).await?;
-    let domain = rustls::pki_types::ServerName::try_from(SGE_HOST)?.to_owned();
-    let mut stream = connector.connect(domain, tcp).await?;
+    let mut stream = connector.connect(SGE_HOST, tcp).await?;
 
     stream.write_all(b"K\n").await?;
     let key = read_packet(&mut stream).await?;
@@ -215,8 +171,7 @@ pub async fn authenticate(
 ) -> Result<Session> {
     let connector = build_tls_connector()?;
     let tcp = TcpStream::connect((SGE_HOST, SGE_PORT)).await?;
-    let domain = rustls::pki_types::ServerName::try_from(SGE_HOST)?.to_owned();
-    let mut stream = connector.connect(domain, tcp).await?;
+    let mut stream = connector.connect(SGE_HOST, tcp).await?;
 
     // K — request hash key challenge
     stream.write_all(b"K\n").await?;
