@@ -158,7 +158,7 @@ impl GameObjRegistry {
     pub fn clear_loot(&mut self) { self.loot.clear(); }
     pub fn clear_npcs(&mut self) { self.npcs.clear(); self.npc_status.clear(); }
     pub fn clear_pcs(&mut self) { self.pcs.clear(); self.pc_status.clear(); }
-    pub fn clear_inv(&mut self) { self.inv.clear(); }
+    pub fn clear_inv(&mut self) { self.inv.clear(); self.contents.clear(); }
     pub fn clear_room_desc(&mut self) { self.room_desc.clear(); }
     pub fn clear_all_containers(&mut self) { self.contents.clear(); }
 

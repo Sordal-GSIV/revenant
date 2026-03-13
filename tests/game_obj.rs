@@ -44,14 +44,14 @@ fn test_status_returns_gone_for_unknown_id() {
 
 #[test]
 fn test_npc_with_no_status_string_returns_gone() {
-    // Lich5 behaviour: status() returns 'gone' for any ID not in the status hash.
-    // An NPC registered without a status string is NOT in npc_status, so it returns 'gone'
-    // (same as Lich5: @@npc_status[@id] || @@pc_status[@id] || 'gone').
+    // When an NPC is registered without a status string, npc_status contains no entry for it.
+    // status() falls through to return "gone" — matching Lich5 which also returns 'gone' via
+    // `@@npc_status[@id] || @@pc_status[@id] || 'gone'` (nil || 'gone' == 'gone' in Ruby).
+    // Scripts distinguishing live vs absent NPCs should use GameObj.npcs() membership,
+    // not status() alone.
     let mut reg = GameObjRegistry::new();
     reg.new_npc("-1", "goblin", "a goblin", None);
     assert_eq!(reg.status("-1"), "gone");
-    // Scripts that want to know if an NPC is alive (vs. dead/gone) should check
-    // GameObj.npcs() membership, not status alone.
 }
 
 #[test]
@@ -138,6 +138,17 @@ fn test_clear_for_room_transition_clears_room_objects() {
     assert!(reg.loot.is_empty());
     assert!(reg.pcs.is_empty());
     assert!(reg.room_desc.is_empty());
+}
+
+#[test]
+fn test_clear_inv_also_clears_container_contents() {
+    let mut reg = GameObjRegistry::new();
+    reg.new_inv("-10", "backpack", "a leather backpack", None, None, None);
+    reg.new_inv("-11", "coin", "a gold coin", Some("-10"), None, None);
+    assert_eq!(reg.contents.get("-10").unwrap().len(), 1);
+    reg.clear_inv();
+    assert!(reg.inv.is_empty());
+    assert!(reg.contents.is_empty(), "container contents should be cleared with inv");
 }
 
 #[test]

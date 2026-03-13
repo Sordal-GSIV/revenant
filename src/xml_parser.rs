@@ -129,8 +129,8 @@ impl StreamParser {
     }
 
     fn process_tag(&mut self, inner: &str, events: &mut Vec<XmlEvent>) {
-        if inner.starts_with('/') {
-            match &inner[1..] {
+        if let Some(rest) = inner.strip_prefix('/') {
+            match rest {
                 "component" => {
                     self.current_component = None;
                     self.in_bold = false;
