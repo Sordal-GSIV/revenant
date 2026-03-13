@@ -11,7 +11,7 @@ pub struct ScriptEngine {
     pub game_state: Arc<Mutex<Option<Arc<RwLock<crate::game_state::GameState>>>>>,
     pub scripts_dir: Arc<Mutex<String>>,
     pub running: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    pub script_args: Arc<Mutex<HashMap<String, String>>>,
+    pub script_args: Arc<Mutex<HashMap<String, Vec<String>>>>,
     pub downstream_hooks: Arc<Mutex<crate::hook_chain::HookChain>>,
     pub upstream_hooks: Arc<Mutex<crate::hook_chain::HookChain>>,
     pub db: Arc<Mutex<Option<crate::db::Db>>>,
@@ -111,10 +111,13 @@ impl ScriptEngine {
     pub fn unpause_script(&self, _name: &str) {}
 
     /// Launch a named script from a file path as a tokio task.
-    pub fn start_script(&self, name: &str, path: &str) -> Result<()> {
+    /// `args` follows Lich5 convention: args[0] = full arg string, args[1..] = individual tokens.
+    pub fn start_script(&self, name: &str, path: &str, args: Vec<String>) -> Result<()> {
         let code = std::fs::read_to_string(path)?;
         let lua = self.lua.clone();
         let script_name = name.to_string();
+
+        self.script_args.lock().unwrap().insert(name.to_string(), args);
 
         let handle = tokio::spawn(async move {
             let result: LuaResult<()> = async {

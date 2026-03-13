@@ -7,10 +7,29 @@ pub enum DispatchResult {
 }
 
 /// Parse args Lich5-style: index 0 = full string, index 1 = first token, etc.
+/// Handles double-quoted strings as single tokens (quotes stripped from value).
 pub fn parse_args(rest: &str) -> Vec<String> {
-    let trimmed = rest.trim();
-    let mut args = vec![trimmed.to_string()];
-    args.extend(trimmed.split_whitespace().map(|s| s.to_string()));
+    if rest.is_empty() {
+        return vec![];
+    }
+    let mut args = vec![rest.to_string()]; // args[0] = full string (Lich5 compat)
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in rest.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ' ' | '\t' if !in_quotes => {
+                if !current.is_empty() {
+                    args.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
     args
 }
 
@@ -18,9 +37,9 @@ pub async fn dispatch(raw: &str, engine: &Arc<ScriptEngine>) -> DispatchResult {
     // Strip <c> prefix added by Stormfront/Wrayth
     let line = raw.strip_prefix("<c>").unwrap_or(raw);
 
-    // Not a semicolon command — pass through
+    // Not a semicolon command — pass through original raw bytes unchanged
     if !line.starts_with(';') {
-        return DispatchResult::Forward(line.to_string());
+        return DispatchResult::Forward(raw.to_string());
     }
 
     // Strip the leading ';'
@@ -85,7 +104,8 @@ pub async fn dispatch(raw: &str, engine: &Arc<ScriptEngine>) -> DispatchResult {
             let scripts_dir = engine.scripts_dir.lock().unwrap().clone();
             let path = format!("{}/{}.lua", scripts_dir, name);
             if std::path::Path::new(&path).exists() {
-                match engine.start_script(name, &path) {
+                let args = parse_args(rest);
+                match engine.start_script(name, &path, args) {
                     Ok(()) => {}
                     Err(e) => engine.respond(&format!("Failed to start script '{name}': {e}")),
                 }

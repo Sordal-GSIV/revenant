@@ -87,7 +87,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         // Launch autostart.lua if it exists
         let autostart_path = format!("{}/autostart.lua", config.scripts_dir);
         if std::path::Path::new(&autostart_path).exists() {
-            engine.start_script("autostart", &autostart_path)?;
+            engine.start_script("autostart", &autostart_path, vec![])?;
         }
 
         let ds_tx = downstream_tx.clone();
