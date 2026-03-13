@@ -1,5 +1,10 @@
 use quick_xml::events::Event;
 use quick_xml::Reader;
+pub use crate::game_obj::ObjCategory;
+
+/// Which hand slot an object update refers to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjHand { Right, Left }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum XmlEvent {
@@ -29,6 +34,21 @@ pub enum XmlEvent {
     StylePush { id: String },
     StylePop,
     Unknown { tag: String },
+    /// A game object was created/updated in a room or inventory stream.
+    GameObjCreate {
+        id: String,
+        noun: String,
+        name: String,
+        category: ObjCategory,
+        /// NPC/PC status string if present (e.g., "dead", "prone").
+        status: Option<String>,
+    },
+    /// A component stream started sending fresh content — clear that registry.
+    ComponentClear { component_id: String },
+    /// The game sent a hand object with an existence ID.
+    GameObjHandUpdate { hand: ObjHand, id: String, noun: String, name: String },
+    /// The hand is empty ("nothing").
+    GameObjHandClear { hand: ObjHand },
 }
 
 /// Streaming GemStone XML parser.
@@ -43,11 +63,23 @@ pub enum XmlEvent {
 pub struct StreamParser {
     buf: String,
     current_style: Option<String>,
+    /// Which `<component id="...">` stream is currently open, if any.
+    current_component: Option<String>,
+    /// Whether we are inside a `<b>` bold tag (distinguishes NPCs from loot).
+    in_bold: bool,
+    /// Container ID set by `<inv id="...">` tag; scopes subsequent `<a>` objects.
+    current_inv_container: Option<String>,
 }
 
 impl StreamParser {
     pub fn new() -> Self {
-        Self { buf: String::new(), current_style: None }
+        Self {
+            buf: String::new(),
+            current_style: None,
+            current_component: None,
+            in_bold: false,
+            current_inv_container: None,
+        }
     }
 
     /// Append `data` to the internal buffer and return all complete events.
@@ -73,8 +105,14 @@ impl StreamParser {
                         None => break, // Tag incomplete — wait for more data
                         Some(gt) => {
                             let tag_inner = self.buf[1..gt].to_string();
+                            let len_before = self.buf.len();
                             self.buf.drain(..=gt);
                             self.process_tag(&tag_inner, &mut events);
+                            // If process_tag put the tag back (incomplete element),
+                            // the buffer grew back to its original size — stop draining.
+                            if self.buf.len() >= len_before {
+                                break;
+                            }
                         }
                     }
                 }
@@ -92,7 +130,19 @@ impl StreamParser {
 
     fn process_tag(&mut self, inner: &str, events: &mut Vec<XmlEvent>) {
         if inner.starts_with('/') {
-            // End tag — ignored (nesting not tracked)
+            match &inner[1..] {
+                "component" => {
+                    self.current_component = None;
+                    self.in_bold = false;
+                }
+                "b" => {
+                    self.in_bold = false;
+                }
+                "inv" => {
+                    self.current_inv_container = None;
+                }
+                _ => {}
+            }
             return;
         }
         if inner.starts_with('!') || inner.starts_with('?') {
@@ -130,7 +180,7 @@ impl StreamParser {
             // Start tag: <tag attr="val">
             let tag_name = inner.split_whitespace().next().unwrap_or("");
             match tag_name {
-                "prompt" | "component" | "spell" => {
+                "prompt" | "spell" => {
                     // Need to find the matching end tag before we can parse
                     let end_tag = format!("</{}>", tag_name);
                     match self.buf.find(&end_tag) {
@@ -146,6 +196,103 @@ impl StreamParser {
                             let attrs = attrs_from_xml(&xml);
                             if let Some(ev) = parse_start_tag(tag_name, &attrs, &plain) {
                                 events.push(ev);
+                            }
+                        }
+                    }
+                }
+                "component" => {
+                    let xml = format!("<{}/>", inner);
+                    let attrs = attrs_from_xml(&xml);
+                    let id = attr(&attrs, "id").unwrap_or_default();
+                    match id.as_str() {
+                        // Text-content components: read to </component> and emit room events.
+                        "room name" | "room desc" => {
+                            let end_tag = "</component>";
+                            match self.buf.find(end_tag) {
+                                None => {
+                                    self.buf.insert_str(0, &format!("<{}>", inner));
+                                }
+                                Some(offset) => {
+                                    let content = self.buf[..offset].to_string();
+                                    self.buf.drain(..offset + end_tag.len());
+                                    let plain = strip_tags(&content);
+                                    if let Some(ev) = parse_start_tag("component", &attrs, &plain) {
+                                        events.push(ev);
+                                    }
+                                }
+                            }
+                        }
+                        // Object-stream components: set context and emit ComponentClear.
+                        "room objs" | "room players" | "inv" => {
+                            events.push(XmlEvent::ComponentClear { component_id: id.clone() });
+                            if id == "inv" { self.current_inv_container = None; }
+                            self.current_component = Some(id);
+                            self.in_bold = false;
+                        }
+                        _ => {
+                            self.current_component = Some(id);
+                        }
+                    }
+                }
+                "b" => {
+                    self.in_bold = true;
+                }
+                "inv" => {
+                    // <inv id="container_id"> scopes subsequent inventory items
+                    let xml = format!("<{}/>", inner);
+                    let attrs = attrs_from_xml(&xml);
+                    self.current_inv_container = attr(&attrs, "id");
+                }
+                "a" => {
+                    let end_tag = "</a>";
+                    match self.buf.find(end_tag) {
+                        None => {
+                            self.buf.insert_str(0, &format!("<{}>", inner));
+                        }
+                        Some(offset) => {
+                            let raw_content = self.buf[..offset].to_string();
+                            self.buf.drain(..offset + end_tag.len());
+                            let name = strip_tags(&raw_content);
+                            if name.is_empty() { return; }
+                            let xml = format!("<{}/>", inner);
+                            let attrs = attrs_from_xml(&xml);
+                            let id = attr(&attrs, "exist").unwrap_or_default();
+                            let noun = attr(&attrs, "noun").unwrap_or_default();
+                            if id.is_empty() { return; }
+                            let category = match self.current_component.as_deref() {
+                                Some("room objs") if self.in_bold => ObjCategory::Npc,
+                                Some("room objs") => ObjCategory::Loot,
+                                Some("room players") => ObjCategory::Pc,
+                                Some("inv") => ObjCategory::Inv {
+                                    container: self.current_inv_container.clone(),
+                                },
+                                _ => return,
+                            };
+                            events.push(XmlEvent::GameObjCreate {
+                                id, noun, name, category, status: None,
+                            });
+                        }
+                    }
+                }
+                "right" | "left" => {
+                    let hand = if tag_name == "right" { ObjHand::Right } else { ObjHand::Left };
+                    let end_tag = format!("</{}>", tag_name);
+                    match self.buf.find(&end_tag) {
+                        None => {
+                            self.buf.insert_str(0, &format!("<{}>", inner));
+                        }
+                        Some(offset) => {
+                            let raw_content = self.buf[..offset].to_string();
+                            self.buf.drain(..offset + end_tag.len());
+                            let name = strip_tags(&raw_content);
+                            let xml = format!("<{}/>", inner);
+                            let attrs = attrs_from_xml(&xml);
+                            let id = attr(&attrs, "exist").unwrap_or_default();
+                            let noun = attr(&attrs, "noun").unwrap_or_default();
+                            if id.is_empty() || name == "nothing" || name.trim().is_empty() {
+                                events.push(XmlEvent::GameObjHandClear { hand });
+                            } else {
+                                events.push(XmlEvent::GameObjHandUpdate { hand, id, noun, name });
                             }
                         }
                     }
