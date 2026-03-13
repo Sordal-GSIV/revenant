@@ -115,8 +115,7 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        // tokio-rustls uses rustls with aws_lc_rs (not ring) by default
-        rustls::crypto::aws_lc_rs::default_provider()
+        rustls::crypto::ring::default_provider()
             .signature_verification_algorithms
             .supported_schemes()
     }

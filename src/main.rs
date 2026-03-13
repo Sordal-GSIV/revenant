@@ -81,7 +81,11 @@ fn launch_game_client(config: &revenant::config::Config, key: &str) {
             "wizard" => format!("/G{game_code_short}/H{host} /P{listen_port} /K{key}"),
             _ => format!("/G{game_code_short}/H{host}/P{listen_port}/K{key}"),
         };
-        format!("wine {exe} {args}")
+        // On Windows run the exe directly; on Linux/WSL2 use wine
+        #[cfg(target_os = "windows")]
+        { format!("{exe} {args}") }
+        #[cfg(not(target_os = "windows"))]
+        { format!("wine {exe} {args}") }
     };
 
     let dir = config.custom_launch_dir.as_deref().unwrap_or(".");
