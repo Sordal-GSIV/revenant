@@ -2,16 +2,24 @@ use revenant::xml_parser::{XmlEvent, parse_chunk};
 
 #[test]
 fn test_parse_health_tag() {
-    let xml = r#"<health id="health" value="150" text="150"/>"#;
+    // GemStone sends vitals as <progressBar id="health" .../>
+    let xml = r#"<progressBar id="health" value="150" text="150"/>"#;
     let events = parse_chunk(xml);
     assert!(events.iter().any(|e| matches!(e, XmlEvent::Health { value: 150, .. })));
 }
 
 #[test]
 fn test_parse_max_health_from_text_attribute() {
-    let xml = r#"<health id="health" value="150" text="150/200"/>"#;
+    let xml = r#"<progressBar id="health" value="150" text="150/200"/>"#;
     let events = parse_chunk(xml);
     assert!(events.iter().any(|e| matches!(e, XmlEvent::Health { value: 150, max: Some(200) })));
+}
+
+#[test]
+fn test_parse_style_room_name() {
+    let xml = "<style id=\"roomName\"/>The Cobblestone Street<style id=\"\"/>";
+    let events = parse_chunk(xml);
+    assert!(events.iter().any(|e| matches!(e, XmlEvent::RoomName { name } if name.contains("Cobblestone"))));
 }
 
 #[test]

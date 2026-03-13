@@ -25,6 +25,9 @@ pub enum XmlEvent {
     Text { content: String },
     StreamWindow { id: String, title: String },
     Mode { id: String, room_id: Option<u32> },
+    /// <style id="roomName"/> … <style id=""/> styled-text room name/desc
+    StylePush { id: String },
+    StylePop,
     Unknown { tag: String },
 }
 
@@ -32,10 +35,15 @@ pub enum XmlEvent {
 /// The stream mixes XML tags with plain text. This parser is line-oriented
 /// and best-effort — partial tags across TCP packet boundaries will appear
 /// as Text events and be forwarded unchanged to the client.
+///
+/// Tracks `<style id="roomName"/>` / `<style id="roomDesc"/>` within the
+/// chunk to emit RoomName / RoomDescription events from styled text.
 pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
     let mut events = Vec::new();
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
+
+    let mut current_style: Option<String> = None;
 
     loop {
         match reader.read_event() {
@@ -51,7 +59,11 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
                     })
                     .collect();
                 if let Some(ev) = parse_empty_tag(&tag, &attrs) {
-                    events.push(ev);
+                    match &ev {
+                        XmlEvent::StylePush { id } => { current_style = Some(id.clone()); }
+                        XmlEvent::StylePop => { current_style = None; }
+                        _ => { events.push(ev); }
+                    }
                 } else {
                     events.push(XmlEvent::Unknown { tag });
                 }
@@ -79,11 +91,21 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
             Ok(Event::Text(ref t)) => {
                 let s = t.decode().unwrap_or_default().into_owned();
                 if !s.is_empty() {
-                    events.push(XmlEvent::Text { content: s });
+                    // Styled text: <style id="roomName"/> text <style id=""/>
+                    match current_style.as_deref() {
+                        Some("roomName") => {
+                            events.push(XmlEvent::RoomName { name: s });
+                        }
+                        Some("roomDesc") => {
+                            events.push(XmlEvent::RoomDescription { text: s });
+                        }
+                        _ => {
+                            events.push(XmlEvent::Text { content: s });
+                        }
+                    }
                 }
             }
             Ok(Event::GeneralRef(ref e)) => {
-                // Entity reference in text — forward raw (e.g. "&amp;" -> "&amp;")
                 let name = std::str::from_utf8(e.as_ref()).unwrap_or("");
                 let raw = format!("&{};", name);
                 events.push(XmlEvent::Text { content: raw });
@@ -124,10 +146,19 @@ fn parse_vital(attrs: &Attrs) -> (u32, Option<u32>) {
 
 fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
     match tag {
-        "health" => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Health { value: v, max: m }) }
-        "mana"   => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Mana   { value: v, max: m }) }
-        "spirit" => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Spirit { value: v, max: m }) }
-        "stamina" => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Stamina { value: v, max: m }) }
+        // GemStone sends vitals as <progressBar id="health" text="100/200" value="100"/>
+        // (not as <health .../> — that tag never appears in the live stream)
+        "progressBar" => {
+            let id = attr(attrs, "id").unwrap_or_default();
+            match id.as_str() {
+                "health"        => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Health { value: v, max: m }) }
+                "mana"          => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Mana   { value: v, max: m }) }
+                "spirit"        => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Spirit { value: v, max: m }) }
+                "stamina"       => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Stamina { value: v, max: m }) }
+                "concentration" => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Concentration { value: v, max: m }) }
+                _ => None,
+            }
+        }
         "roundTime" => {
             let epoch: i64 = attr(attrs, "value")?.parse().ok()?;
             Some(XmlEvent::RoundTime { end_epoch: epoch })
@@ -172,6 +203,14 @@ fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
             // room ID comes from <nav rm="123"/>
             let id = attr(attrs, "rm").and_then(|v| v.parse().ok())?;
             Some(XmlEvent::RoomId { id })
+        }
+        "style" => {
+            let id = attr(attrs, "id").unwrap_or_default();
+            if id.is_empty() {
+                Some(XmlEvent::StylePop)
+            } else {
+                Some(XmlEvent::StylePush { id })
+            }
         }
         _ => None,
     }
