@@ -58,9 +58,55 @@ fn main() -> anyhow::Result<()> {
     })
 }
 
+fn launch_game_client(config: &revenant::config::Config, key: &str) {
+    let listen_port = config.listen.split(':').last()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(4900);
+
+    let game_code_short = if config.game.starts_with("DR") { "DR" } else { "GS" };
+
+    let cmd = if let Some(ref custom) = config.custom_launch {
+        custom.replace("%port%", &listen_port.to_string())
+              .replace("%key%", key)
+    } else {
+        let exe = match config.frontend.as_str() {
+            "wizard" => "Wizard.Exe",
+            _ => "Wrayth.exe",
+        };
+        let host = match config.frontend.as_str() {
+            "wizard" => "127.0.0.1",
+            _ => "localhost",
+        };
+        let args = match config.frontend.as_str() {
+            "wizard" => format!("/G{game_code_short}/H{host} /P{listen_port} /K{key}"),
+            _ => format!("/G{game_code_short}/H{host}/P{listen_port}/K{key}"),
+        };
+        format!("wine {exe} {args}")
+    };
+
+    let dir = config.custom_launch_dir.as_deref().unwrap_or(".");
+
+    tracing::info!("Launching game client: {}", cmd.replace(key, "[KEY]"));
+
+    let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+    if parts.is_empty() { return; }
+
+    let mut command = std::process::Command::new(parts[0]);
+    if parts.len() > 1 {
+        command.args(parts[1].split_whitespace());
+    }
+    if dir != "." {
+        command.current_dir(dir);
+    }
+
+    match command.spawn() {
+        Ok(child) => tracing::info!("Game client launched (pid {})", child.id()),
+        Err(e) => tracing::error!("Failed to launch game client: {e}"),
+    }
+}
+
 #[cfg(feature = "monitor")]
 fn run_with_gui(config: revenant::config::Config) -> anyhow::Result<()> {
-    use revenant::login::LoginApp;
     use revenant::monitor::MonitorApp;
 
     // Show the login window first
@@ -71,6 +117,10 @@ fn run_with_gui(config: revenant::config::Config) -> anyhow::Result<()> {
     resolved.password = Some(login_result.password);
     resolved.game = login_result.game_code;
     resolved.character = Some(login_result.character);
+    resolved.session = login_result.session;
+    resolved.frontend = login_result.frontend.as_str().to_string();
+    resolved.custom_launch = login_result.custom_launch;
+    resolved.custom_launch_dir = login_result.custom_launch_dir;
 
     let engine = Arc::new(revenant::script_engine::ScriptEngine::new());
     engine.set_scripts_dir(&resolved.scripts_dir);
@@ -78,6 +128,11 @@ fn run_with_gui(config: revenant::config::Config) -> anyhow::Result<()> {
         if let Err(e) = engine.load_map(p) {
             tracing::warn!("Could not load map: {e}");
         }
+    }
+
+    // Launch game client if we have a pre-obtained session key
+    if let Some(ref session) = resolved.session {
+        launch_game_client(&resolved, &session.key);
     }
 
     // Spawn proxy in background tokio runtime

@@ -24,7 +24,7 @@ mod tests {
         let key = [1u8; 32];
         let mut store = CredentialStore::default();
         store.add_account("acct", "pass", &key).unwrap();
-        store.add_character("acct", "Aragorn", "GS3", "GemStone IV");
+        store.add_character("acct", "Aragorn", "GS3", "GemStone IV", "stormfront", None, None);
         let acct = store.accounts.iter().find(|a| a.account == "acct").unwrap();
         assert_eq!(acct.characters[0].name, "Aragorn");
     }

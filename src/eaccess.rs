@@ -43,7 +43,7 @@ pub const SGE_PORT: u16 = 7910;
 /// Maximum packet size — matches PACKET_SIZE = 8192 in eaccess.rb.
 const PACKET_SIZE: usize = 8192;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Session {
     pub host: String,
     pub port: u16,

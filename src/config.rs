@@ -21,4 +21,12 @@ pub struct Config {
     pub map_path: Option<String>,
     #[arg(long, default_value_t = false)]
     pub monitor: bool,
+    #[arg(skip)]
+    pub session: Option<crate::eaccess::Session>,
+    #[arg(skip)]
+    pub frontend: String,
+    #[arg(skip)]
+    pub custom_launch: Option<String>,
+    #[arg(skip)]
+    pub custom_launch_dir: Option<String>,
 }

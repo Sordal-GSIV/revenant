@@ -12,6 +12,35 @@ const GAME_CODES: &[(&str, &str)] = &[
     ("GSF", "GemStone IV Prime F2P"),
 ];
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Frontend {
+    Wrayth,
+    Wizard,
+}
+
+impl Frontend {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Frontend::Wrayth => "stormfront",
+            Frontend::Wizard => "wizard",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Frontend::Wrayth => "Wrayth",
+            Frontend::Wizard => "Wizard",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "wizard" => Frontend::Wizard,
+            _ => Frontend::Wrayth,
+        }
+    }
+}
+
 /// The result returned when the user clicks Play.
 #[derive(Debug, Clone)]
 pub struct LoginResult {
@@ -19,6 +48,10 @@ pub struct LoginResult {
     pub password: String,
     pub game_code: String,
     pub character: String,
+    pub frontend: Frontend,
+    pub custom_launch: Option<String>,
+    pub custom_launch_dir: Option<String>,
+    pub session: Option<crate::eaccess::Session>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +75,23 @@ enum AcctSubTab {
     AddAccount,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum PlayState {
+    Idle,
+    Authenticating,
+}
+
+#[derive(Clone)]
+struct PendingPlay {
+    account: String,
+    password: String,
+    game_code: String,
+    character: String,
+    frontend: Frontend,
+    custom_launch: Option<String>,
+    custom_launch_dir: Option<String>,
+}
+
 pub struct LoginApp {
     // Tab selection
     tab: MainTab,
@@ -60,8 +110,20 @@ pub struct LoginApp {
     manual_save: bool,
     manual_favorite: bool,
     manual_status: String,
+    manual_game_idx: usize,
+    manual_game_code: String,
+    manual_frontend: Frontend,
+    manual_custom_launch_enabled: bool,
+    manual_custom_launch: String,
+    manual_custom_launch_dir: String,
     fetch_tx: SyncSender<Result<Vec<CharacterEntry>, String>>,
     fetch_rx: Receiver<Result<Vec<CharacterEntry>, String>>,
+
+    // ── Play auth ─────────────────────────────────────────────────────
+    play_state: PlayState,
+    play_tx: SyncSender<Result<crate::eaccess::Session, String>>,
+    play_rx: Receiver<Result<crate::eaccess::Session, String>>,
+    pending_play: Option<PendingPlay>,
 
     // ── Account Management tab ────────────────────────────────────────
     acct_sub_tab: AcctSubTab,
@@ -74,6 +136,10 @@ pub struct LoginApp {
     add_char_name: String,
     add_char_game_idx: usize,
     add_char_status: String,
+    add_char_frontend: Frontend,
+    add_char_custom_launch_enabled: bool,
+    add_char_custom_launch: String,
+    add_char_custom_launch_dir: String,
     // Add Account sub-tab
     add_acct_username: String,
     add_acct_password: String,
@@ -90,6 +156,7 @@ impl LoginApp {
     pub fn new() -> Self {
         let (fetch_tx, fetch_rx) = sync_channel(1);
         let (add_acct_tx, add_acct_rx) = sync_channel(1);
+        let (play_tx, play_rx) = sync_channel(1);
         let key = CredentialStore::load_or_create_key().unwrap_or([0u8; 32]);
         let store = CredentialStore::load().unwrap_or_default();
 
@@ -106,8 +173,18 @@ impl LoginApp {
             manual_save: false,
             manual_favorite: false,
             manual_status: String::new(),
+            manual_game_idx: 0,
+            manual_game_code: GAME_CODES[0].0.to_string(),
+            manual_frontend: Frontend::Wrayth,
+            manual_custom_launch_enabled: false,
+            manual_custom_launch: String::new(),
+            manual_custom_launch_dir: String::new(),
             fetch_tx,
             fetch_rx,
+            play_state: PlayState::Idle,
+            play_tx,
+            play_rx,
+            pending_play: None,
             acct_sub_tab: AcctSubTab::Accounts,
             accounts_status: String::new(),
             change_pw_account: None,
@@ -116,6 +193,10 @@ impl LoginApp {
             add_char_name: String::new(),
             add_char_game_idx: 0,
             add_char_status: String::new(),
+            add_char_frontend: Frontend::Wrayth,
+            add_char_custom_launch_enabled: false,
+            add_char_custom_launch: String::new(),
+            add_char_custom_launch_dir: String::new(),
             add_acct_username: String::new(),
             add_acct_password: String::new(),
             add_acct_status: String::new(),
@@ -142,8 +223,56 @@ impl Default for LoginApp {
     }
 }
 
+impl LoginApp {
+    fn start_play(&mut self, pending: PendingPlay) {
+        self.play_state = PlayState::Authenticating;
+        self.pending_play = Some(pending.clone());
+        let tx = self.play_tx.clone();
+        let account = pending.account.clone();
+        let password = pending.password.clone();
+        let game_code = pending.game_code.clone();
+        let character = pending.character.clone();
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => { let _ = tx.send(Err(e.to_string())); return; }
+            };
+            let result = rt.block_on(crate::eaccess::authenticate(
+                &account, &password, &game_code, &character
+            ));
+            let _ = tx.send(result.map_err(|e| e.to_string()));
+        });
+    }
+}
+
 impl eframe::App for LoginApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Poll play auth result
+        if let Ok(res) = self.play_rx.try_recv() {
+            self.play_state = PlayState::Idle;
+            match res {
+                Ok(session) => {
+                    if let Some(pending) = self.pending_play.take() {
+                        self.result = Some(LoginResult {
+                            account: pending.account,
+                            password: pending.password,
+                            game_code: pending.game_code,
+                            character: pending.character,
+                            frontend: pending.frontend,
+                            custom_launch: pending.custom_launch,
+                            custom_launch_dir: pending.custom_launch_dir,
+                            session: Some(session),
+                        });
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+                Err(e) => {
+                    self.manual_status = format!("Auth failed: {e}");
+                    self.saved_status = format!("Auth failed: {e}");
+                }
+            }
+        }
+
         // Poll manual-tab fetch channel
         if let Ok(res) = self.fetch_rx.try_recv() {
             match res {
@@ -184,7 +313,9 @@ impl eframe::App for LoginApp {
                                 &ch.name,
                                 "GS3",
                                 Self::game_name("GS3"),
-                                false,
+                                "stormfront",
+                                None,
+                                None,
                             );
                         }
                         match self.store.save() {
@@ -260,7 +391,8 @@ impl LoginApp {
             }
         }
 
-        let mut play_result: Option<LoginResult> = None;
+        let authenticating = self.play_state == PlayState::Authenticating;
+        let mut play_pending: Option<PendingPlay> = None;
         let mut toggle_fav: Option<(String, String, String)> = None;
         let mut remove_char: Option<(String, String, String)> = None;
 
@@ -298,7 +430,7 @@ impl LoginApp {
                 match selected.as_deref() {
                     Some("★ FAVORITES") => {
                         // Collect all favorite characters
-                        let mut favorites: Vec<(String, String, String, String)> = Vec::new();
+                        let mut favorites: Vec<(String, String, String, String, String, Option<String>, Option<String>)> = Vec::new();
                         for acct in &self.store.accounts {
                             for ch in &acct.characters {
                                 if ch.favorite {
@@ -307,6 +439,9 @@ impl LoginApp {
                                         ch.name.clone(),
                                         ch.game_code.clone(),
                                         ch.game_name.clone(),
+                                        ch.frontend.clone(),
+                                        ch.custom_launch.clone(),
+                                        ch.custom_launch_dir.clone(),
                                     ));
                                 }
                             }
@@ -317,14 +452,15 @@ impl LoginApp {
                             ui.label("No favorite characters yet.");
                         } else {
                             egui::ScrollArea::vertical().show(ui, |ui| {
-                                for (account, name, game_code, game_name) in &favorites {
+                                for (account, name, game_code, game_name, frontend_str, custom_launch, custom_launch_dir) in &favorites {
                                     ui.horizontal(|ui| {
+                                        let frontend_display = Frontend::from_str(frontend_str).display_name();
                                         let play_label =
-                                            format!("★ {}    {}", name, game_name);
+                                            format!("★ {}    {}    [{}]", name, game_name, frontend_display);
                                         if ui
-                                            .add_sized(
-                                                [280.0, 24.0],
-                                                egui::Button::new(&play_label),
+                                            .add_enabled(
+                                                !authenticating,
+                                                egui::Button::new(&play_label).min_size(egui::vec2(280.0, 24.0)),
                                             )
                                             .clicked()
                                         {
@@ -333,11 +469,14 @@ impl LoginApp {
                                                 .get_password(account, &self.key)
                                             {
                                                 Ok(pw) => {
-                                                    play_result = Some(LoginResult {
+                                                    play_pending = Some(PendingPlay {
                                                         account: account.clone(),
                                                         password: pw,
                                                         game_code: game_code.clone(),
                                                         character: name.clone(),
+                                                        frontend: Frontend::from_str(frontend_str),
+                                                        custom_launch: custom_launch.clone(),
+                                                        custom_launch_dir: custom_launch_dir.clone(),
                                                     });
                                                 }
                                                 Err(e) => {
@@ -377,7 +516,7 @@ impl LoginApp {
                     }
                     Some(account_name) => {
                         // Show characters for this account
-                        let chars: Vec<(String, String, String, bool)> = self
+                        let chars: Vec<(String, String, String, bool, String, Option<String>, Option<String>)> = self
                             .store
                             .accounts
                             .iter()
@@ -391,6 +530,9 @@ impl LoginApp {
                                             c.game_code.clone(),
                                             c.game_name.clone(),
                                             c.favorite,
+                                            c.frontend.clone(),
+                                            c.custom_launch.clone(),
+                                            c.custom_launch_dir.clone(),
                                         )
                                     })
                                     .collect()
@@ -403,7 +545,7 @@ impl LoginApp {
                         } else {
                             egui::ScrollArea::vertical().show(ui, |ui| {
                                 let mut last_game: Option<String> = None;
-                                for (name, game_code, game_name, is_fav) in &chars {
+                                for (name, game_code, game_name, is_fav, frontend_str, custom_launch, custom_launch_dir) in &chars {
                                     if last_game.as_ref() != Some(game_code) {
                                         if last_game.is_some() {
                                             ui.separator();
@@ -411,15 +553,16 @@ impl LoginApp {
                                         last_game = Some(game_code.clone());
                                     }
                                     ui.horizontal(|ui| {
+                                        let frontend_display = Frontend::from_str(frontend_str).display_name();
                                         let char_display = if *is_fav {
-                                            format!("★ {}    {}", name, game_name)
+                                            format!("★ {}    {}    [{}]", name, game_name, frontend_display)
                                         } else {
-                                            format!("{}    {}", name, game_name)
+                                            format!("{}    {}    [{}]", name, game_name, frontend_display)
                                         };
                                         if ui
-                                            .add_sized(
-                                                [280.0, 24.0],
-                                                egui::Button::new(&char_display),
+                                            .add_enabled(
+                                                !authenticating,
+                                                egui::Button::new(&char_display).min_size(egui::vec2(280.0, 24.0)),
                                             )
                                             .clicked()
                                         {
@@ -428,11 +571,14 @@ impl LoginApp {
                                                 .get_password(&account_name, &self.key)
                                             {
                                                 Ok(pw) => {
-                                                    play_result = Some(LoginResult {
+                                                    play_pending = Some(PendingPlay {
                                                         account: account_name.clone(),
                                                         password: pw,
                                                         game_code: game_code.clone(),
                                                         character: name.clone(),
+                                                        frontend: Frontend::from_str(frontend_str),
+                                                        custom_launch: custom_launch.clone(),
+                                                        custom_launch_dir: custom_launch_dir.clone(),
                                                     });
                                                 }
                                                 Err(e) => {
@@ -495,8 +641,9 @@ impl LoginApp {
             }
             let _ = self.store.save();
         }
-        if let Some(r) = play_result {
-            self.result = Some(r);
+        if let Some(pending) = play_pending {
+            self.saved_status = "Authenticating...".to_string();
+            self.start_play(pending);
         }
 
         // Status + Refresh at bottom
@@ -517,6 +664,7 @@ impl LoginApp {
     fn show_manual_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let is_fetching = self.connect_state == ConnectState::Fetching;
         let is_connected = matches!(self.connect_state, ConnectState::Connected(_));
+        let authenticating = self.play_state == PlayState::Authenticating;
 
         // Login fields
         let mut trigger_connect = false;
@@ -542,6 +690,18 @@ impl LoginApp {
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     trigger_connect = true;
                 }
+                ui.end_row();
+
+                ui.label("Game:");
+                egui::ComboBox::from_id_salt("manual_game")
+                    .selected_text(GAME_CODES[self.manual_game_idx.min(GAME_CODES.len() - 1)].1)
+                    .show_ui(ui, |ui| {
+                        for (i, &(code, name)) in GAME_CODES.iter().enumerate() {
+                            if ui.selectable_value(&mut self.manual_game_idx, i, name).clicked() {
+                                self.manual_game_code = code.to_string();
+                            }
+                        }
+                    });
                 ui.end_row();
             });
 
@@ -589,7 +749,7 @@ impl LoginApp {
                         let chars = chars.clone();
                         for (idx, ch) in chars.iter().enumerate() {
                             let selected = self.manual_selected_char == Some(idx);
-                            let label = format!("{}    {}", Self::game_name("GS3"), ch.name);
+                            let label = format!("{}    {}", Self::game_name(&self.manual_game_code), ch.name);
                             if ui
                                 .selectable_label(selected, &label)
                                 .clicked()
@@ -602,6 +762,27 @@ impl LoginApp {
             });
 
         ui.add_space(6.0);
+
+        // Frontend selection
+        ui.horizontal(|ui| {
+            ui.label("Frontend:");
+            ui.radio_value(&mut self.manual_frontend, Frontend::Wrayth, "Wrayth");
+            ui.radio_value(&mut self.manual_frontend, Frontend::Wizard, "Wizard");
+        });
+
+        ui.checkbox(&mut self.manual_custom_launch_enabled, "Custom launch command");
+        if self.manual_custom_launch_enabled {
+            ui.horizontal(|ui| {
+                ui.label("Command:");
+                ui.text_edit_singleline(&mut self.manual_custom_launch);
+            });
+            ui.horizontal(|ui| {
+                ui.label("Directory:");
+                ui.text_edit_singleline(&mut self.manual_custom_launch_dir);
+            });
+        }
+
+        ui.add_space(6.0);
         ui.checkbox(&mut self.manual_save, "Save this info for quick game entry");
         if self.manual_save {
             ui.checkbox(&mut self.manual_favorite, "★ Mark as favorite");
@@ -610,7 +791,7 @@ impl LoginApp {
         ui.add_space(6.0);
 
         // Play button
-        let can_play = self.manual_selected_char.is_some() && is_connected;
+        let can_play = self.manual_selected_char.is_some() && is_connected && !authenticating;
         if ui
             .add_enabled(can_play, egui::Button::new("Play"))
             .clicked()
@@ -635,6 +816,7 @@ impl LoginApp {
 
         let account = self.manual_account.clone();
         let password = self.manual_password.clone();
+        let game_code = self.manual_game_code.clone();
         let tx = self.fetch_tx.clone();
         let ctx = ctx.clone();
 
@@ -647,7 +829,7 @@ impl LoginApp {
                     return;
                 }
             };
-            let result = rt.block_on(list_characters(&account, &password, "GS3"));
+            let result = rt.block_on(list_characters(&account, &password, &game_code));
             let _ = tx.send(result.map_err(|e| format!("{e:#}")));
             ctx.request_repaint();
         });
@@ -659,8 +841,19 @@ impl LoginApp {
                 if let Some(ch) = chars.get(idx) {
                     let account = self.manual_account.clone();
                     let password = self.manual_password.clone();
-                    let game_code = "GS3".to_string();
+                    let game_code = self.manual_game_code.clone();
                     let character = ch.name.clone();
+
+                    let custom_launch = if self.manual_custom_launch_enabled {
+                        Some(self.manual_custom_launch.clone())
+                    } else {
+                        None
+                    };
+                    let custom_launch_dir = if self.manual_custom_launch_enabled {
+                        Some(self.manual_custom_launch_dir.clone())
+                    } else {
+                        None
+                    };
 
                     if self.manual_save {
                         // Ensure account exists
@@ -683,17 +876,24 @@ impl LoginApp {
                             &character,
                             &game_code,
                             Self::game_name(&game_code),
-                            self.manual_favorite,
+                            self.manual_frontend.as_str(),
+                            custom_launch.clone(),
+                            custom_launch_dir.clone(),
                         );
                         let _ = self.store.save();
                     }
 
-                    self.result = Some(LoginResult {
+                    let pending = PendingPlay {
                         account,
                         password,
                         game_code,
                         character,
-                    });
+                        frontend: self.manual_frontend.clone(),
+                        custom_launch,
+                        custom_launch_dir,
+                    };
+                    self.manual_status = "Authenticating...".to_string();
+                    self.start_play(pending);
                 }
             }
         }
@@ -901,6 +1101,26 @@ impl LoginApp {
 
         ui.add_space(6.0);
 
+        ui.horizontal(|ui| {
+            ui.label("Frontend:");
+            ui.radio_value(&mut self.add_char_frontend, Frontend::Wrayth, "Wrayth");
+            ui.radio_value(&mut self.add_char_frontend, Frontend::Wizard, "Wizard");
+        });
+
+        ui.checkbox(&mut self.add_char_custom_launch_enabled, "Custom launch command");
+        if self.add_char_custom_launch_enabled {
+            ui.horizontal(|ui| {
+                ui.label("Command:");
+                ui.text_edit_singleline(&mut self.add_char_custom_launch);
+            });
+            ui.horizontal(|ui| {
+                ui.label("Directory:");
+                ui.text_edit_singleline(&mut self.add_char_custom_launch_dir);
+            });
+        }
+
+        ui.add_space(6.0);
+
         if ui.button("Add Character").clicked() {
             if self.add_char_name.trim().is_empty() {
                 self.add_char_status = "Character name is required.".to_string();
@@ -908,8 +1128,18 @@ impl LoginApp {
                 let acct = &account_names[self.add_char_account_idx];
                 let game_idx = self.add_char_game_idx.min(GAME_CODES.len() - 1);
                 let (code, name) = GAME_CODES[game_idx];
+                let custom_launch = if self.add_char_custom_launch_enabled {
+                    Some(self.add_char_custom_launch.clone())
+                } else {
+                    None
+                };
+                let custom_launch_dir = if self.add_char_custom_launch_enabled {
+                    Some(self.add_char_custom_launch_dir.clone())
+                } else {
+                    None
+                };
                 self.store
-                    .add_character(acct, self.add_char_name.trim(), code, name, false);
+                    .add_character(acct, self.add_char_name.trim(), code, name, self.add_char_frontend.as_str(), custom_launch, custom_launch_dir);
                 match self.store.save() {
                     Ok(()) => {
                         self.add_char_status = format!(

@@ -4,6 +4,10 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+fn default_frontend() -> String {
+    "stormfront".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedCharacter {
     pub name: String,
@@ -11,6 +15,12 @@ pub struct SavedCharacter {
     pub game_name: String,
     #[serde(default)]
     pub favorite: bool,
+    #[serde(default = "default_frontend")]
+    pub frontend: String,
+    #[serde(default)]
+    pub custom_launch: Option<String>,
+    #[serde(default)]
+    pub custom_launch_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,20 +135,30 @@ impl CredentialStore {
         name: &str,
         game_code: &str,
         game_name: &str,
-        favorite: bool,
+        frontend: &str,
+        custom_launch: Option<String>,
+        custom_launch_dir: Option<String>,
     ) {
         if let Some(a) = self
             .accounts
             .iter_mut()
             .find(|a| a.account.to_lowercase() == account.to_lowercase())
         {
+            // Preserve favorite status if the character already existed
+            let was_favorite = a.characters.iter()
+                .find(|c| c.name.to_lowercase() == name.to_lowercase())
+                .map(|c| c.favorite)
+                .unwrap_or(false);
             a.characters
                 .retain(|c| c.name.to_lowercase() != name.to_lowercase());
             a.characters.push(SavedCharacter {
                 name: name.to_string(),
                 game_code: game_code.to_string(),
                 game_name: game_name.to_string(),
-                favorite,
+                favorite: was_favorite,
+                frontend: frontend.to_string(),
+                custom_launch,
+                custom_launch_dir,
             });
         }
     }

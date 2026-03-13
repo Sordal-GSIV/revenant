@@ -34,12 +34,16 @@ pub async fn run(config: Config, engine: Arc<ScriptEngine>) -> Result<()> {
 }
 
 async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngine>) -> Result<()> {
-    let session = eaccess::authenticate(
-        config.account.as_deref().unwrap_or(""),
-        config.password.as_deref().unwrap_or(""),
-        &config.game,
-        config.character.as_deref().unwrap_or(""),
-    ).await?;
+    let session = if let Some(s) = config.session.clone() {
+        s
+    } else {
+        eaccess::authenticate(
+            config.account.as_deref().unwrap_or(""),
+            config.password.as_deref().unwrap_or(""),
+            &config.game,
+            config.character.as_deref().unwrap_or(""),
+        ).await?
+    };
     info!("Connecting to game server {}:{}", session.host, session.port);
 
     let server = TcpStream::connect((session.host.as_str(), session.port)).await?;
