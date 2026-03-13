@@ -25,7 +25,7 @@ fn test_parse_roundtime() {
 fn test_parse_prompt() {
     let xml = r#"<prompt time="1234567890">&gt;</prompt>"#;
     let events = parse_chunk(xml);
-    assert!(events.iter().any(|e| matches!(e, XmlEvent::Prompt { .. })));
+    assert!(events.iter().any(|e| matches!(e, XmlEvent::Prompt { text, .. } if text == ">")));
 }
 
 #[test]

@@ -115,7 +115,7 @@ fn parse_vital(attrs: &Attrs) -> (u32, Option<u32>) {
             let cur: u32 = parts[0].parse().unwrap_or(value);
             let max: u32 = parts[1].parse().unwrap_or(0);
             return (cur, Some(max));
-        } else if parts.len() > 2 {
+        } else {
             tracing::warn!("parse_vital: unexpected text format {:?}, using value-only", text);
         }
     }
