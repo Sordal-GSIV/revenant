@@ -83,3 +83,20 @@ async fn test_script_run_and_kill() {
     engine.kill_script("s").await;
     assert!(!engine.is_running("s"));
 }
+
+#[tokio::test]
+async fn test_script_kill_from_lua() {
+    let engine = ScriptEngine::new();
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), "pause(9999)").unwrap();
+
+    engine.install_lua_api().unwrap();
+    engine.start_script("lua_kill_test", tmp.path().to_str().unwrap()).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    assert!(engine.is_running("lua_kill_test"));
+
+    // Kill via Lua API (not engine.kill_script directly)
+    engine.eval_lua(r#"Script.kill("lua_kill_test")"#).await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    assert!(!engine.is_running("lua_kill_test"));
+}

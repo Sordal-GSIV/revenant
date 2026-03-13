@@ -19,12 +19,16 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // Script.list() → array table of running script names
     let running = engine.running.clone();
     t.set("list", lua.create_function(move |lua, ()| {
-        let r = running.lock().unwrap();
+        let names: Vec<String> = {
+            let r = running.lock().unwrap();
+            r.iter()
+                .filter(|(_, h)| !h.is_finished())
+                .map(|(n, _)| n.clone())
+                .collect()
+        };
         let out = lua.create_table()?;
-        for (i, (name, handle)) in r.iter().enumerate() {
-            if !handle.is_finished() {
-                out.set(i + 1, name.as_str())?;
-            }
+        for (i, name) in names.iter().enumerate() {
+            out.set(i + 1, name.as_str())?;
         }
         Ok(out)
     })?)?;
