@@ -80,7 +80,8 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         });
 
         // Wire client_tx into engine for respond()
-        // (respond() stub prints to stdout for now; the channel is wired in Task 5)
+        let client_tx_respond = client_tx.clone();
+        engine.set_respond_sink(move |s| { let _ = client_tx_respond.send(s.into_bytes()); });
 
         engine.install_lua_api()?;
 
@@ -215,6 +216,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         client_handle.abort();
         *engine.upstream_sink.lock().unwrap() = None;
         *engine.downstream_tx.lock().unwrap() = None;
+        *engine.respond_sink.lock().unwrap() = None;
         *engine.game_state.lock().unwrap() = None;
         info!("Session ended, engine state cleared");
         session_result?;

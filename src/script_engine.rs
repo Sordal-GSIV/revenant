@@ -8,6 +8,7 @@ pub struct ScriptEngine {
     pub lua: Arc<Lua>,
     pub upstream_sink: Arc<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>>,
     pub downstream_tx: Arc<Mutex<Option<tokio::sync::broadcast::Sender<Arc<Vec<u8>>>>>>,
+    pub respond_sink: Arc<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>>,
     pub game_state: Arc<Mutex<Option<Arc<RwLock<crate::game_state::GameState>>>>>,
     pub scripts_dir: Arc<Mutex<String>>,
     pub running: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
@@ -29,6 +30,7 @@ impl ScriptEngine {
             lua: Arc::new(Lua::new()),
             upstream_sink: Arc::new(Mutex::new(None)),
             downstream_tx: Arc::new(Mutex::new(None)),
+            respond_sink: Arc::new(Mutex::new(None)),
             game_state: Arc::new(Mutex::new(None)),
             scripts_dir: Arc::new(Mutex::new("../scripts".to_string())),
             running: Arc::new(Mutex::new(HashMap::new())),
@@ -58,6 +60,10 @@ impl ScriptEngine {
         *self.downstream_tx.lock().unwrap() = Some(tx);
     }
 
+    pub fn set_respond_sink<F: Fn(String) + Send + Sync + 'static>(&self, f: F) {
+        *self.respond_sink.lock().unwrap() = Some(Box::new(f));
+    }
+
     pub fn set_game_state(&self, gs: Arc<RwLock<crate::game_state::GameState>>) {
         let mut lock = self.game_state.lock().unwrap();
         if lock.is_some() {
@@ -67,9 +73,12 @@ impl ScriptEngine {
     }
 
     /// Send a message directly to the client output stream.
-    /// Stub: prints to stdout until the client_tx channel is wired (Task 1).
     pub fn respond(&self, msg: &str) {
-        println!("{msg}");
+        if let Some(f) = self.respond_sink.lock().unwrap().as_ref() {
+            f(format!("<output class=\"mono\">{msg}</output>\n"));
+        } else {
+            println!("[respond] {msg}");
+        }
     }
 
     /// Pause all running scripts.

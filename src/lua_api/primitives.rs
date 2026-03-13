@@ -13,9 +13,14 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(())
     })?)?;
 
-    // respond(text) — echo to client only (v1: stdout stub)
-    globals.set("respond", lua.create_function(|_, text: String| {
-        println!("[respond] {text}");
+    // respond(text) — echo to client TCP stream
+    let respond_sink = engine.respond_sink.clone();
+    globals.set("respond", lua.create_function(move |_, text: String| {
+        if let Some(f) = respond_sink.lock().unwrap().as_ref() {
+            f(format!("<output class=\"mono\">{text}</output>\n"));
+        } else {
+            println!("[respond] {text}");
+        }
         Ok(())
     })?)?;
 
@@ -102,17 +107,38 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
-    // fput(cmd) — put + wait for prompt (v1: just put, prompt wait is TODO)
+    // fput(cmd) — put + wait for <prompt> from downstream
     let sink = engine.upstream_sink.clone();
+    let dtx = engine.downstream_tx.clone();
     globals.set("fput", lua.create_async_function(move |_, cmd: String| {
         let sink = sink.clone();
+        let dtx = dtx.clone();
         async move {
+            // Send the command — lock dropped before .await
             let line = if cmd.ends_with('\n') { cmd } else { format!("{cmd}\n") };
-            if let Some(f) = sink.lock().unwrap().as_ref() { f(line); }
-            // TODO: wait for next <prompt> event via downstream channel.
-            // IMPORTANT: ensure the sink lock above is fully dropped before adding any
-            // .await here — holding a std::sync::Mutex guard across an await point will
-            // deadlock on single-threaded tokio executors.
+            {
+                let guard = sink.lock().unwrap();
+                if let Some(f) = guard.as_ref() { f(line); }
+            }
+            // Subscribe to downstream — lock dropped before .await
+            let mut rx = match dtx.lock().unwrap().as_ref() {
+                Some(tx) => tx.subscribe(),
+                None => return Ok(()),
+            };
+            let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
+            loop {
+                let recv = tokio::time::timeout_at(deadline, rx.recv()).await;
+                match recv {
+                    Err(_) => break, // timed out
+                    Ok(Err(_)) => break, // channel error
+                    Ok(Ok(bytes)) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        if text.contains("<prompt") {
+                            break;
+                        }
+                    }
+                }
+            }
             Ok(())
         }
     })?)?;
