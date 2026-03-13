@@ -14,6 +14,28 @@ async fn test_char_settings_roundtrip_from_lua() {
 
     // Missing key returns nil (not empty string)
     engine.eval_lua(r#"assert(CharSettings["nonexistent"] == nil)"#).await.unwrap();
+
+    // Boolean value coerced to string
+    engine.eval_lua(r#"CharSettings["flag"] = true"#).await.unwrap();
+    engine.eval_lua(r#"assert(CharSettings["flag"] == "true")"#).await.unwrap();
+
+    // Number coerced to string
+    engine.eval_lua(r#"CharSettings["threshold"] = 42"#).await.unwrap();
+    engine.eval_lua(r#"assert(CharSettings["threshold"] == "42")"#).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_user_vars_roundtrip_from_lua() {
+    use revenant::db::Db;
+    let engine = ScriptEngine::new();
+    engine.set_db(Db::open(":memory:").unwrap(), "TestChar", "GS3");
+    engine.install_lua_api().unwrap();  // sync, no .await
+
+    engine.eval_lua(r#"UserVars["threshold"] = "500""#).await.unwrap();
+    engine.eval_lua(r#"assert(UserVars["threshold"] == "500")"#).await.unwrap();
+
+    // Missing key returns nil
+    engine.eval_lua(r#"assert(UserVars["nonexistent"] == nil)"#).await.unwrap();
 }
 
 #[tokio::test]
