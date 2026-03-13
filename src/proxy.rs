@@ -9,15 +9,26 @@ use tracing::{error, info, warn};
 pub async fn run(config: Config, engine: Arc<ScriptEngine>) -> Result<()> {
     let listener = TcpListener::bind(&config.listen).await?;
     info!("Listening on {}", config.listen);
+    let active = Arc::new(tokio::sync::Mutex::new(false));
     loop {
         let (client, addr) = listener.accept().await?;
-        info!("Client connected from {addr}");
+        let mut is_active = active.lock().await;
+        if *is_active {
+            warn!("Second client attempted to connect from {addr} — rejecting (single-client proxy)");
+            drop(client); // close the connection
+            continue;
+        }
+        *is_active = true;
+        drop(is_active);
         let cfg = config.clone();
         let eng = engine.clone();
+        let active2 = active.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_client(client, cfg, eng).await {
                 error!("Session error: {e:#}");
             }
+            *active2.lock().await = false;
+            info!("Client disconnected, ready for new connection");
         });
     }
 }
@@ -85,7 +96,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let ds_hooks = engine.downstream_hooks.clone();
 
         // Downstream: server → parse XML → hook chain → client_writer
-        let down = tokio::spawn(async move {
+        let mut down_handle = tokio::spawn(async move {
             let mut buf = vec![0u8; 4096];
             loop {
                 let n = srv_r.read(&mut buf).await?;
@@ -127,7 +138,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let upstream_tx_up = upstream_tx.clone();
 
         // Upstream: client → line-buffer → hook chain → upstream_tx
-        let up = tokio::spawn(async move {
+        let mut up_handle = tokio::spawn(async move {
             let mut buf = vec![0u8; 4096];
             let mut line_buf = String::new();
             loop {
@@ -162,7 +173,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         });
 
         // sink_drain: upstream_rx → server write (owns srv_w exclusively)
-        let sink_drain = tokio::spawn(async move {
+        let mut sink_handle = tokio::spawn(async move {
             while let Some(line) = upstream_rx.recv().await {
                 let mut bytes = line.into_bytes();
                 if !bytes.ends_with(b"\n") {
@@ -174,7 +185,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         });
 
         // client_writer: client_rx → client write (owns cli_w exclusively)
-        let client_writer = tokio::spawn(async move {
+        let mut client_handle = tokio::spawn(async move {
             let mut cli_w = cli_w;
             while let Some(data) = client_rx.recv().await {
                 cli_w.write_all(&data).await?;
@@ -183,13 +194,24 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         });
 
         tokio::select! {
-            r = down          => { r??; }
-            r = up            => { r??; }
-            r = sink_drain    => { r??; }
-            r = client_writer => { r??; }
+            r = &mut down_handle   => { r??; }
+            r = &mut up_handle     => { r??; }
+            r = &mut sink_handle   => { r??; }
+            r = &mut client_handle => { r??; }
         }
+
+        // Abort remaining tasks so none leak after session ends
+        down_handle.abort();
+        up_handle.abort();
+        sink_handle.abort();
+        client_handle.abort();
+
+        // Clear engine sinks so the closure (and its sender clone) is dropped,
+        // allowing sink_drain to observe channel close on reconnect.
+        *engine.upstream_sink.lock().unwrap() = None;
+        *engine.downstream_tx.lock().unwrap() = None;
+        info!("Session ended, engine sinks cleared");
     }
 
-    info!("Session ended");
     Ok(())
 }
