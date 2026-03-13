@@ -3,6 +3,14 @@ use std::sync::Arc;
 use tracing::info;
 
 fn main() -> anyhow::Result<()> {
+    // WSL2 display backend fix: force X11 over Wayland to avoid broken pipe errors
+    // and arboard/winit clipboard mismatch. X11/XWayland works reliably in WSLg.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WSL_DISTRO_NAME").is_some() {
+        // SAFETY: called before any threads are spawned (top of main).
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY"); }
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
