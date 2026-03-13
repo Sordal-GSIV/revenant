@@ -69,3 +69,17 @@ async fn test_downstream_hook_from_lua() {
     let names = engine.downstream_hooks.lock().unwrap().hook_names();
     assert!(names.contains(&"t".to_string()));
 }
+
+#[tokio::test]
+async fn test_script_run_and_kill() {
+    let engine = ScriptEngine::new();
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), "pause(9999)").unwrap();
+
+    engine.install_lua_api().unwrap();  // sync, no .await
+    engine.start_script("s", tmp.path().to_str().unwrap()).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    assert!(engine.is_running("s"), "script should be running");
+    engine.kill_script("s").await;
+    assert!(!engine.is_running("s"));
+}
