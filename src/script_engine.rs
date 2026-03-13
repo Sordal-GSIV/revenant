@@ -96,6 +96,20 @@ impl ScriptEngine {
         if let Some(h) = handle { h.abort(); }
     }
 
+    /// Kill all running scripts.
+    pub async fn kill_all(&self) {
+        let handles: Vec<_> = self.running.lock().unwrap().drain().collect();
+        for (_name, handle) in handles {
+            handle.abort();
+        }
+    }
+
+    /// Pause a named script. (Implemented in Task 4.)
+    pub fn pause_script(&self, _name: &str) {}
+
+    /// Unpause a named script. (Implemented in Task 4.)
+    pub fn unpause_script(&self, _name: &str) {}
+
     /// Launch a named script from a file path as a tokio task.
     pub fn start_script(&self, name: &str, path: &str) -> Result<()> {
         let code = std::fs::read_to_string(path)?;

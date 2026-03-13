@@ -136,6 +136,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
 
         let us_hooks = engine.upstream_hooks.clone();
         let upstream_tx_up = upstream_tx.clone();
+        let engine_up = engine.clone();
 
         // Upstream: client → line-buffer → hook chain → upstream_tx
         let mut up_handle = tokio::spawn(async move {
@@ -150,21 +151,29 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                     let line = line_buf[..=pos].to_string();
                     line_buf = line_buf[pos + 1..].to_string();
 
-                    // Run upstream hook chain
-                    // TODO: dispatch in Task 2
-                    let result = {
-                        let chain = us_hooks.lock().unwrap();
-                        chain.process_sync(&line)
+                    // Dispatch: semicolon commands are consumed; others run through hook chain
+                    let dispatch_result = crate::dispatch::dispatch(line.trim_end_matches('\n'), &engine_up).await;
+                    let forwarded = match dispatch_result {
+                        crate::dispatch::DispatchResult::Forward(s) => Some(s + "\n"),
+                        crate::dispatch::DispatchResult::Consumed => None,
                     };
-                    match result {
-                        Some(s) => {
-                            if let Err(e) = upstream_tx_up.send(s) {
-                                warn!("upstream_tx send failed: {e}");
-                                break;
+
+                    if let Some(fwd) = forwarded {
+                        // Run upstream hook chain on forwarded line
+                        let result = {
+                            let chain = us_hooks.lock().unwrap();
+                            chain.process_sync(&fwd)
+                        };
+                        match result {
+                            Some(s) => {
+                                if let Err(e) = upstream_tx_up.send(s) {
+                                    warn!("upstream_tx send failed: {e}");
+                                    break;
+                                }
                             }
-                        }
-                        None => {
-                            // Hook suppressed this line — don't forward to server
+                            None => {
+                                // Hook suppressed this line — don't forward to server
+                            }
                         }
                     }
                 }

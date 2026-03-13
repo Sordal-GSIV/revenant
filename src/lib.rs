@@ -1,4 +1,5 @@
 pub mod config;
+pub mod dispatch;
 pub mod eaccess;
 pub mod frontend;
 pub mod game_state;
