@@ -55,3 +55,17 @@ async fn test_gamestate_roundtime_fn() {
     engine.install_lua_api().unwrap();  // sync, no .await
     engine.eval_lua("assert(GameState.roundtime() == 0.0)").await.unwrap();
 }
+
+#[tokio::test]
+async fn test_downstream_hook_from_lua() {
+    let engine = ScriptEngine::new();
+    engine.install_lua_api().unwrap();  // sync, no .await
+    engine.eval_lua(r#"
+        DownstreamHook.add("t", function(line)
+            return "[x]" .. line
+        end)
+    "#).await.unwrap();
+    // Verify the hook was registered
+    let names = engine.downstream_hooks.lock().unwrap().hook_names();
+    assert!(names.contains(&"t".to_string()));
+}

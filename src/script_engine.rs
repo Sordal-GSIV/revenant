@@ -12,6 +12,8 @@ pub struct ScriptEngine {
     pub scripts_dir: Arc<Mutex<String>>,
     pub running: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     pub script_args: Arc<Mutex<HashMap<String, String>>>,
+    pub downstream_hooks: Arc<Mutex<crate::hook_chain::HookChain>>,
+    pub upstream_hooks: Arc<Mutex<crate::hook_chain::HookChain>>,
 }
 
 impl ScriptEngine {
@@ -24,6 +26,8 @@ impl ScriptEngine {
             scripts_dir: Arc::new(Mutex::new("../scripts".to_string())),
             running: Arc::new(Mutex::new(HashMap::new())),
             script_args: Arc::new(Mutex::new(HashMap::new())),
+            downstream_hooks: Arc::new(Mutex::new(crate::hook_chain::HookChain::new())),
+            upstream_hooks: Arc::new(Mutex::new(crate::hook_chain::HookChain::new())),
         }
     }
 

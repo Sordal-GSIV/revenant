@@ -12,7 +12,7 @@ use anyhow::Result;
 pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     primitives::register(engine)?;
     game_state::register(engine)?;
-    // hooks::register(engine)?;
+    hooks::register(engine)?;
     // script::register(engine)?;
     // settings::register(engine)?;
     Ok(())
