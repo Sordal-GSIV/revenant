@@ -193,24 +193,22 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
             anyhow::Ok(())
         });
 
-        tokio::select! {
-            r = &mut down_handle   => { r??; }
-            r = &mut up_handle     => { r??; }
-            r = &mut sink_handle   => { r??; }
-            r = &mut client_handle => { r??; }
-        }
-
-        // Abort remaining tasks so none leak after session ends
+        let session_result = tokio::select! {
+            r = &mut down_handle => r.map_err(|e| anyhow::anyhow!("task: {e}")).and_then(|r| r),
+            r = &mut up_handle => r.map_err(|e| anyhow::anyhow!("task: {e}")).and_then(|r| r),
+            r = &mut sink_handle => r.map_err(|e| anyhow::anyhow!("task: {e}")).and_then(|r| r),
+            r = &mut client_handle => r.map_err(|e| anyhow::anyhow!("task: {e}")).and_then(|r| r),
+        };
+        // Always abort remaining tasks and clear sinks — even on error
         down_handle.abort();
         up_handle.abort();
         sink_handle.abort();
         client_handle.abort();
-
-        // Clear engine sinks so the closure (and its sender clone) is dropped,
-        // allowing sink_drain to observe channel close on reconnect.
         *engine.upstream_sink.lock().unwrap() = None;
         *engine.downstream_tx.lock().unwrap() = None;
-        info!("Session ended, engine sinks cleared");
+        *engine.game_state.lock().unwrap() = None;
+        info!("Session ended, engine state cleared");
+        session_result?;
     }
 
     Ok(())
