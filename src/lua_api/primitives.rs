@@ -50,7 +50,10 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 };
                 match bytes {
                     Ok(b) => {
-                        // Convert bytes to lossy string for pattern matching
+                        // Convert bytes to lossy string for pattern matching.
+                        // Note: patterns that straddle a TCP packet boundary will not match
+                        // because neither fragment is a complete UTF-8 sequence. Acceptable
+                        // for v1 (game output is ASCII/SGE XML).
                         let text = String::from_utf8_lossy(&b);
                         if text.contains(pattern.as_str()) {
                             return Ok(());
@@ -72,7 +75,10 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         async move {
             let line = if cmd.ends_with('\n') { cmd } else { format!("{cmd}\n") };
             if let Some(f) = sink.lock().unwrap().as_ref() { f(line); }
-            // TODO: wait for next <prompt> event via downstream channel
+            // TODO: wait for next <prompt> event via downstream channel.
+            // IMPORTANT: ensure the sink lock above is fully dropped before adding any
+            // .await here — holding a std::sync::Mutex guard across an await point will
+            // deadlock on single-threaded tokio executors.
             Ok(())
         }
     })?)?;
