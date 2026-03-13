@@ -9,6 +9,8 @@ pub struct SavedCharacter {
     pub name: String,
     pub game_code: String,
     pub game_name: String,
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +125,7 @@ impl CredentialStore {
         name: &str,
         game_code: &str,
         game_name: &str,
+        favorite: bool,
     ) {
         if let Some(a) = self
             .accounts
@@ -135,8 +138,31 @@ impl CredentialStore {
                 name: name.to_string(),
                 game_code: game_code.to_string(),
                 game_name: game_name.to_string(),
+                favorite,
             });
         }
+    }
+
+    pub fn toggle_favorite(
+        &mut self,
+        account: &str,
+        char_name: &str,
+        game_code: &str,
+    ) -> bool {
+        if let Some(a) = self
+            .accounts
+            .iter_mut()
+            .find(|a| a.account.to_lowercase() == account.to_lowercase())
+        {
+            if let Some(ch) = a.characters.iter_mut().find(|c| {
+                c.name.to_lowercase() == char_name.to_lowercase()
+                    && c.game_code == game_code
+            }) {
+                ch.favorite = !ch.favorite;
+                return ch.favorite;
+            }
+        }
+        false
     }
 
     pub fn remove_account(&mut self, account: &str) {

@@ -147,7 +147,7 @@ where
     Ok(String::from_utf8_lossy(&buf[..n]).trim().to_string())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CharacterEntry {
     pub id: String,
     pub name: String,
