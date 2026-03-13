@@ -10,7 +10,7 @@ fn test_hash_password_transforms_each_byte() {
     // Same length as password (raw bytes, not hex)
     assert_eq!(result.len(), password.len());
     // Verify first byte: 'h'=104, 'A'=65 → ((104-32) ^ 65) + 32 = (72^65)+32 = 9+32 = 41
-    assert_eq!(result.as_bytes()[0], 41u8);
+    assert_eq!(result[0], 41u8);
 }
 
 #[test]

@@ -58,22 +58,21 @@ pub struct Session {
 ///   `password.each_index { |i| password[i] = ((password[i] - 32) ^ hashkey[i]) + 32 }`
 ///
 /// Each output byte = `((input_byte - 32) ^ key_byte[i % key_len]) + 32`.
-/// The modulo is a safety net; in practice the server key length matches.
-/// Returns raw bytes as a String (may contain non-UTF8; lossy conversion matches Ruby behavior).
-pub fn hash_password(password: &str, key: &str) -> String {
+/// Returns raw bytes — the result is not valid UTF-8 in general and must be
+/// sent as a byte slice, not converted through a String.
+pub fn hash_password(password: &str, key: &str) -> Vec<u8> {
     let key_bytes: Vec<u8> = key.trim().bytes().collect();
     if key_bytes.is_empty() {
-        return password.to_string();
+        return password.as_bytes().to_vec();
     }
-    let result: Vec<u8> = password
+    password
         .bytes()
         .enumerate()
         .map(|(i, b)| {
             let k = key_bytes[i % key_bytes.len()];
             (b.wrapping_sub(32) ^ k).wrapping_add(32)
         })
-        .collect();
-    String::from_utf8_lossy(&result).into_owned()
+        .collect()
 }
 
 /// Build a TLS connector that accepts any server certificate.
@@ -125,7 +124,10 @@ pub async fn list_characters(
     stream.write_all(b"K\n").await?;
     let key = read_packet(&mut stream).await?;
     let hash = hash_password(password, &key);
-    stream.write_all(format!("A\t{account}\t{hash}\n").as_bytes()).await?;
+    let mut auth_cmd = format!("A\t{account}\t").into_bytes();
+    auth_cmd.extend_from_slice(&hash);
+    auth_cmd.push(b'\n');
+    stream.write_all(&auth_cmd).await?;
     let auth_resp = read_packet(&mut stream).await?;
     if !auth_resp.contains("KEY\t") {
         bail!("SGE auth failed: {auth_resp}");
@@ -181,9 +183,10 @@ pub async fn authenticate(
     // A — authenticate with hashed password
     // eaccess.rb line 93: password[i] = ((password[i] - 32) ^ hashkey[i]) + 32
     let hash = hash_password(password, &key);
-    stream
-        .write_all(format!("A\t{account}\t{hash}\n").as_bytes())
-        .await?;
+    let mut auth_cmd = format!("A\t{account}\t").into_bytes();
+    auth_cmd.extend_from_slice(&hash);
+    auth_cmd.push(b'\n');
+    stream.write_all(&auth_cmd).await?;
     let auth_resp = read_packet(&mut stream).await?;
     debug!("SGE auth: {auth_resp}");
     // eaccess.rb checks for /KEY\t/ match, raises AuthenticationError if not found
