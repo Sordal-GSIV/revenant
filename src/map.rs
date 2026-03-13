@@ -13,9 +13,9 @@ pub struct MapRoom {
     /// wayto[dest_id_str] = command string to send
     #[serde(default)]
     pub wayto: HashMap<String, String>,
-    /// timeto[dest_id_str] = travel weight (seconds)
+    /// timeto[dest_id_str] = travel weight (seconds); null means impassable without a script
     #[serde(default)]
-    pub timeto: HashMap<String, f64>,
+    pub timeto: HashMap<String, Option<f64>>,
     #[serde(default)]
     pub paths: Vec<String>,
     #[serde(default)]
@@ -92,7 +92,11 @@ impl MapData {
             let room = match self.rooms.get(&room_id) { Some(r) => r, None => continue };
             for (dest_str, cmd) in &room.wayto {
                 let dest_id: u32 = match dest_str.parse() { Ok(v) => v, Err(_) => continue };
-                let edge_cost = room.timeto.get(dest_str).copied().unwrap_or(1.0);
+                // timeto null means "impassable without a script" — skip this edge
+                let edge_cost = match room.timeto.get(dest_str).copied().flatten() {
+                    Some(c) => c,
+                    None => continue, // null timeto = impassable, skip
+                };
                 let new_cost = cost + edge_cost;
                 let better = dist.get(&dest_id).map_or(true, |&(c, _, _)| new_cost < c);
                 if better {
