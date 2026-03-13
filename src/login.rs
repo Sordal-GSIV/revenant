@@ -21,6 +21,12 @@ enum Tab {
     Accounts,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum FetchOrigin {
+    Manual,
+    Accounts,
+}
+
 /// Status of a background character-fetch operation.
 enum FetchState {
     Idle,
@@ -40,8 +46,8 @@ pub struct LoginApp {
     manual_character: String,
     manual_characters: Vec<CharacterEntry>,
     fetch_state: FetchState,
-    fetch_tx: SyncSender<Result<Vec<CharacterEntry>, String>>,
-    fetch_rx: Receiver<Result<Vec<CharacterEntry>, String>>,
+    fetch_tx: SyncSender<(FetchOrigin, Result<Vec<CharacterEntry>, String>)>,
+    fetch_rx: Receiver<(FetchOrigin, Result<Vec<CharacterEntry>, String>)>,
 
     // ── Accounts tab ────────────────────────────────────────────────────────
     acct_tab_account: String,
@@ -114,18 +120,24 @@ impl Default for LoginApp {
 impl eframe::App for LoginApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Poll background fetch
-        if let Ok(msg) = self.fetch_rx.try_recv() {
-            match msg {
-                Ok(chars) => {
-                    self.fetch_state = FetchState::Done(chars.clone());
+        if let Ok((origin, res)) = self.fetch_rx.try_recv() {
+            self.fetch_state = FetchState::Idle;
+            match (origin, res) {
+                (FetchOrigin::Manual, Ok(chars)) => {
                     self.manual_characters = chars;
                     if !self.manual_characters.is_empty() {
                         self.manual_character =
                             self.manual_characters[0].name.clone();
                     }
                 }
-                Err(e) => {
+                (FetchOrigin::Manual, Err(e)) => {
                     self.fetch_state = FetchState::Error(e);
+                }
+                (FetchOrigin::Accounts, Ok(chars)) => {
+                    self.fetch_state = FetchState::Done(chars);
+                }
+                (FetchOrigin::Accounts, Err(e)) => {
+                    self.acct_tab_status = format!("Error: {e}");
                 }
             }
         }
@@ -257,13 +269,15 @@ impl LoginApp {
 
             // Spawn on a new tokio runtime thread
             std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                let result = rt.block_on(list_characters(&account, &password, &game));
-                let msg = match result {
-                    Ok(chars) => Ok(chars),
-                    Err(e) => Err(format!("{e:#}")),
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        let _ = tx.send((FetchOrigin::Manual, Err(e.to_string())));
+                        return;
+                    }
                 };
-                let _ = tx.send(msg);
+                let result = rt.block_on(list_characters(&account, &password, &game));
+                let _ = tx.send((FetchOrigin::Manual, result.map_err(|e| format!("{e:#}"))));
             });
         }
 
@@ -383,13 +397,15 @@ impl LoginApp {
                 self.fetch_state = FetchState::Fetching;
 
                 std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    let result = rt.block_on(list_characters(&account, &password, &game));
-                    let msg = match result {
-                        Ok(chars) => Ok(chars),
-                        Err(e) => Err(format!("{e:#}")),
+                    let rt = match tokio::runtime::Runtime::new() {
+                        Ok(rt) => rt,
+                        Err(e) => {
+                            let _ = tx.send((FetchOrigin::Accounts, Err(e.to_string())));
+                            return;
+                        }
                     };
-                    let _ = tx.send(msg);
+                    let result = rt.block_on(list_characters(&account, &password, &game));
+                    let _ = tx.send((FetchOrigin::Accounts, result.map_err(|e| format!("{e:#}"))));
                 });
             }
         });

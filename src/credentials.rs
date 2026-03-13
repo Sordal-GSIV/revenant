@@ -155,32 +155,9 @@ impl CredentialStore {
 }
 
 fn rand_key() -> [u8; 32] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use aes_gcm::aead::OsRng;
+    use aes_gcm::aead::rand_core::RngCore;
     let mut key = [0u8; 32];
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let mut h = DefaultHasher::new();
-    t.hash(&mut h);
-    std::process::id().hash(&mut h);
-    let h1 = h.finish();
-    for (i, b) in h1.to_le_bytes().iter().enumerate() {
-        key[i] = *b;
-    }
-    for (i, b) in h1.to_be_bytes().iter().enumerate() {
-        key[8 + i] = *b;
-    }
-    let h2 = h1
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    for (i, b) in h2.to_le_bytes().iter().enumerate() {
-        key[16 + i] = *b;
-    }
-    for (i, b) in h2.to_be_bytes().iter().enumerate() {
-        key[24 + i] = *b;
-    }
+    OsRng.fill_bytes(&mut key);
     key
 }
