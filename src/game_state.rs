@@ -23,6 +23,7 @@ pub struct ActiveSpell {
     pub duration_secs: Option<u32>,
 }
 
+// Note: GameState intentionally omits PartialEq — Instant does not implement PartialEq
 #[derive(Debug, Clone, Default)]
 pub struct GameState {
     pub health: u32, pub max_health: u32,
@@ -69,6 +70,17 @@ impl GameState {
     /// Seconds of roundtime remaining (0.0 if none).
     pub fn roundtime(&self) -> f64 {
         match self.roundtime_end {
+            Some(end) => {
+                let now = Instant::now();
+                if end > now { (end - now).as_secs_f64() } else { 0.0 }
+            }
+            None => 0.0,
+        }
+    }
+
+    /// Seconds of cast roundtime remaining (0.0 if none).
+    pub fn cast_roundtime(&self) -> f64 {
+        match self.cast_roundtime_end {
             Some(end) => {
                 let now = Instant::now();
                 if end > now { (end - now).as_secs_f64() } else { 0.0 }
