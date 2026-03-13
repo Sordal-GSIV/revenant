@@ -123,9 +123,9 @@ impl eframe::App for MonitorApp {
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    let log = self.engine.respond_log.lock().unwrap();
-                    for line in log.iter() {
-                        ui.monospace(line);
+                    let snapshot: Vec<String> = self.engine.respond_log.lock().unwrap().iter().cloned().collect();
+                    for line in &snapshot {
+                        ui.monospace(line.as_str());
                     }
                 });
         });
