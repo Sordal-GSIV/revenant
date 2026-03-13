@@ -74,10 +74,7 @@ pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
                 }
             }
             Ok(Event::Text(ref t)) => {
-                let raw = t.decode().unwrap_or_default();
-                let s = quick_xml::escape::unescape(&raw)
-                    .unwrap_or_else(|_| raw.clone())
-                    .into_owned();
+                let s = t.decode().unwrap_or_default().into_owned();
                 if !s.is_empty() {
                     events.push(XmlEvent::Text { content: s });
                 }
@@ -147,6 +144,24 @@ fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
             let id = attr(attrs, "id").unwrap_or_default();
             let room_id = attr(attrs, "roomId").and_then(|v| v.parse().ok());
             Some(XmlEvent::Mode { id, room_id })
+        }
+        "concentration" => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Concentration { value: v, max: m }) }
+        "rightHand" => {
+            let item = attr(attrs, "noun").filter(|s| !s.is_empty());
+            Some(XmlEvent::RightHand { item })
+        }
+        "leftHand" => {
+            let item = attr(attrs, "noun").filter(|s| !s.is_empty());
+            Some(XmlEvent::LeftHand { item })
+        }
+        "level" => {
+            let value: u32 = attr(attrs, "value").and_then(|v| v.parse().ok()).unwrap_or(0);
+            Some(XmlEvent::Level { value })
+        }
+        "nav" => {
+            // room ID comes from <nav rm="123"/>
+            let id = attr(attrs, "rm").and_then(|v| v.parse().ok())?;
+            Some(XmlEvent::RoomId { id })
         }
         _ => None,
     }
