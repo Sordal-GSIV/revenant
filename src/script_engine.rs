@@ -1,4 +1,5 @@
 use anyhow::Result;
+use crate::map::MapData;
 use mlua::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -8,16 +9,25 @@ pub struct ScriptEngine {
     pub lua: Arc<Lua>,
     pub upstream_sink: Arc<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>>,
     pub downstream_tx: Arc<Mutex<Option<tokio::sync::broadcast::Sender<Arc<Vec<u8>>>>>>,
+    pub respond_sink: Arc<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>>,
     pub game_state: Arc<Mutex<Option<Arc<RwLock<crate::game_state::GameState>>>>>,
+    pub map_data: Arc<RwLock<Option<MapData>>>,
     pub scripts_dir: Arc<Mutex<String>>,
     pub running: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    pub script_args: Arc<Mutex<HashMap<String, String>>>,
+    pub script_args: Arc<Mutex<HashMap<String, Vec<String>>>>,
     pub downstream_hooks: Arc<Mutex<crate::hook_chain::HookChain>>,
     pub upstream_hooks: Arc<Mutex<crate::hook_chain::HookChain>>,
     pub db: Arc<Mutex<Option<crate::db::Db>>>,
     pub character: Arc<Mutex<String>>,
     pub game: Arc<Mutex<String>>,
+    /// Optional hook called when a script exits with an error. Used in tests.
+    pub script_error_hook: Arc<Mutex<Option<Box<dyn Fn(String, String) + Send + Sync>>>>,
+    /// Set of script names that are currently paused.
     pub paused: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// Ring-buffer of the last 500 respond() messages, for the monitor window.
+    pub respond_log: Arc<Mutex<std::collections::VecDeque<String>>>,
+    /// Ring-buffer of the last 2000 lines of game text (XmlEvent::Text), for the monitor window.
+    pub game_log: Arc<Mutex<std::collections::VecDeque<String>>>,
 }
 
 impl ScriptEngine {
@@ -26,7 +36,9 @@ impl ScriptEngine {
             lua: Arc::new(Lua::new()),
             upstream_sink: Arc::new(Mutex::new(None)),
             downstream_tx: Arc::new(Mutex::new(None)),
+            respond_sink: Arc::new(Mutex::new(None)),
             game_state: Arc::new(Mutex::new(None)),
+            map_data: Arc::new(RwLock::new(None)),
             scripts_dir: Arc::new(Mutex::new("../scripts".to_string())),
             running: Arc::new(Mutex::new(HashMap::new())),
             script_args: Arc::new(Mutex::new(HashMap::new())),
@@ -35,8 +47,18 @@ impl ScriptEngine {
             db: Arc::new(Mutex::new(None)),
             character: Arc::new(Mutex::new(String::new())),
             game: Arc::new(Mutex::new("GS3".to_string())),
+            script_error_hook: Arc::new(Mutex::new(None)),
             paused: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            respond_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(500))),
+            game_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(2000))),
         }
+    }
+
+    /// Register a callback invoked when a script exits with an error.
+    /// Signature: `fn(script_name: String, error_message: String)`.
+    /// Primarily used in tests to surface Lua assertion failures.
+    pub fn set_script_error_hook<F: Fn(String, String) + Send + Sync + 'static>(&self, f: F) {
+        *self.script_error_hook.lock().unwrap() = Some(Box::new(f));
     }
 
     pub fn set_upstream_sink<F: Fn(String) + Send + Sync + 'static>(&self, f: F) {
@@ -47,8 +69,42 @@ impl ScriptEngine {
         *self.downstream_tx.lock().unwrap() = Some(tx);
     }
 
+    pub fn set_respond_sink<F: Fn(String) + Send + Sync + 'static>(&self, f: F) {
+        *self.respond_sink.lock().unwrap() = Some(Box::new(f));
+    }
+
     pub fn set_game_state(&self, gs: Arc<RwLock<crate::game_state::GameState>>) {
-        *self.game_state.lock().unwrap() = Some(gs);
+        let mut lock = self.game_state.lock().unwrap();
+        if lock.is_some() {
+            tracing::warn!("set_game_state called but game_state is already set — single-client constraint violated");
+        }
+        *lock = Some(gs);
+    }
+
+    /// Send a message directly to the client output stream.
+    pub fn respond(&self, msg: &str) {
+        {
+            let mut log = self.respond_log.lock().unwrap();
+            if log.len() >= 500 { log.pop_front(); }
+            log.push_back(msg.to_string());
+        }
+        if let Some(f) = self.respond_sink.lock().unwrap().as_ref() {
+            f(format!("<output class=\"mono\">{msg}</output>\n"));
+        } else {
+            println!("[respond] {msg}");
+        }
+    }
+
+    /// Pause all running scripts.
+    pub fn pause_all(&self) {
+        let names: Vec<String> = self.running.lock().unwrap().keys().cloned().collect();
+        let mut p = self.paused.lock().unwrap();
+        for n in names { p.insert(n); }
+    }
+
+    /// Unpause all running scripts.
+    pub fn unpause_all(&self) {
+        self.paused.lock().unwrap().clear();
     }
 
     pub fn set_scripts_dir(&self, dir: &str) {
@@ -59,6 +115,12 @@ impl ScriptEngine {
         *self.db.lock().unwrap() = Some(db);
         *self.character.lock().unwrap() = character.to_string();
         *self.game.lock().unwrap() = game.to_string();
+    }
+
+    pub fn load_map(&self, path: &str) -> Result<()> {
+        let data = MapData::from_file(path)?;
+        *self.map_data.write().unwrap_or_else(|e| e.into_inner()) = Some(data);
+        Ok(())
     }
 
     /// Evaluate Lua code string. Used for tests and REPL.
@@ -82,47 +144,71 @@ impl ScriptEngine {
         if let Some(h) = handle { h.abort(); }
     }
 
+    /// Kill all running scripts.
+    pub async fn kill_all(&self) {
+        let handles: Vec<_> = self.running.lock().unwrap().drain().collect();
+        for (_name, handle) in handles {
+            handle.abort();
+        }
+    }
+
+    /// Pause a named script.
     pub fn pause_script(&self, name: &str) {
         self.paused.lock().unwrap().insert(name.to_string());
     }
 
+    /// Unpause a named script.
     pub fn unpause_script(&self, name: &str) {
         self.paused.lock().unwrap().remove(name);
     }
 
-    pub fn pause_all(&self) {
-        let names: Vec<String> = self.running.lock().unwrap().keys().cloned().collect();
-        let mut p = self.paused.lock().unwrap();
-        for n in names { p.insert(n); }
-    }
-
-    pub fn unpause_all(&self) {
-        self.paused.lock().unwrap().clear();
-    }
-
     /// Launch a named script from a file path as a tokio task.
-    /// `args` are passed to the script as the `Script.args` global (joined by space).
+    /// `args` follows Lich5 convention: args[0] = full arg string, args[1..] = individual tokens.
     pub fn start_script(&self, name: &str, path: &str, args: Vec<String>) -> Result<()> {
         let code = std::fs::read_to_string(path)?;
         let lua = self.lua.clone();
         let script_name = name.to_string();
-        let args_str = args.join(" ");
 
-        // Set _REVENANT_SCRIPT so the pause() implementation can identify the current script
-        lua.globals().set("_REVENANT_SCRIPT", script_name.clone())?;
-        lua.globals().set("_REVENANT_SCRIPT_ARGS", args_str)?;
+        // Store args in Rust-side map
+        self.script_args.lock().unwrap().insert(name.to_string(), args.clone());
 
+        // Inject globals before launch
+        {
+            let globals = lua.globals();
+            globals.set("_REVENANT_SCRIPT", name)
+                .map_err(|e| anyhow::anyhow!("lua globals: {e}"))?;
+            let args_table = lua.create_table()
+                .map_err(|e| anyhow::anyhow!("lua table: {e}"))?;
+            for (i, a) in args.iter().enumerate() {
+                args_table.raw_set(i as i64, a.as_str())
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            let all_args: mlua::Table = globals.get("_REVENANT_SCRIPT_ARGS")
+                .unwrap_or_else(|_| lua.create_table().unwrap());
+            all_args.set(name, args_table)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            globals.set("_REVENANT_SCRIPT_ARGS", all_args)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+
+        let error_hook = self.script_error_hook.clone();
         let handle = tokio::spawn(async move {
             let result: LuaResult<()> = async {
-                // Set per-coroutine script name inside the async block (single-threaded Lua)
-                lua.globals().set("_REVENANT_SCRIPT", script_name.clone())?;
                 let func: LuaFunction = lua.load(&code).set_name(&script_name).into_function()?;
                 let thread = lua.create_thread(func)?;
                 thread.into_async::<mlua::MultiValue>(mlua::MultiValue::new()).await?;
                 Ok(())
             }.await;
             if let Err(e) = result {
-                tracing::error!("[script:{script_name}] error: {e}");
+                let msg = e.to_string();
+                tracing::error!("[script:{script_name}] error: {msg}");
+                if let Some(hook) = error_hook.lock().unwrap().as_ref() {
+                    hook(script_name.clone(), msg);
+                }
+            }
+            // Clean up args table to avoid unbounded growth
+            if let Ok(globals) = lua.globals().get::<mlua::Table>("_REVENANT_SCRIPT_ARGS") {
+                let _ = globals.raw_remove(script_name.as_str());
             }
         });
 

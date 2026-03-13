@@ -27,15 +27,12 @@ async fn test_pause_halts_script_progress() {
     let before_pause = ticks.load(Ordering::SeqCst);
     assert!(before_pause > 0, "script should have ticked before pause");
 
-    // Pause the script
     e.pause_script("looper");
     let snapshot = ticks.load(Ordering::SeqCst);
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let after_pause = ticks.load(Ordering::SeqCst);
-    // Allow one extra tick for in-flight pause
     assert!(after_pause <= snapshot + 1, "script should not advance while paused");
 
-    // Unpause — ticks should resume
     e.unpause_script("looper");
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     let after_unpause = ticks.load(Ordering::SeqCst);

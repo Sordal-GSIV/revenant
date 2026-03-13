@@ -1,4 +1,5 @@
 pub mod config;
+pub mod dispatch;
 pub mod eaccess;
 pub mod frontend;
 pub mod game_state;
@@ -8,3 +9,10 @@ pub mod script_engine;
 pub mod xml_parser;
 pub mod db;
 pub mod lua_api;
+pub mod map;
+#[cfg(feature = "monitor")]
+pub mod monitor;
+#[cfg(feature = "monitor")]
+pub mod credentials;
+#[cfg(feature = "monitor")]
+pub mod login;

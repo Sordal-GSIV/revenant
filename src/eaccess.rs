@@ -27,11 +27,9 @@
 // - Read: sysread(8192) — single packet read, not line-by-line
 
 use anyhow::{bail, Context, Result};
-use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_rustls::rustls;
-use tokio_rustls::TlsConnector;
+use tokio_native_tls::TlsConnector;
 use tracing::debug;
 
 /// eAccess server hostname.
@@ -43,13 +41,15 @@ pub const SGE_PORT: u16 = 7910;
 /// Maximum packet size — matches PACKET_SIZE = 8192 in eaccess.rb.
 const PACKET_SIZE: usize = 8192;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Session {
     pub host: String,
     pub port: u16,
     pub key: String,
     pub game: String,
     pub character: String,
+    /// All raw key=value pairs from the L response, used for Avalon SAL file generation.
+    pub raw_fields: Vec<(String, String)>,
 }
 
 /// Hash the SGE password using the server-provided key.
@@ -58,77 +58,34 @@ pub struct Session {
 ///   `password.each_index { |i| password[i] = ((password[i] - 32) ^ hashkey[i]) + 32 }`
 ///
 /// Each output byte = `((input_byte - 32) ^ key_byte[i % key_len]) + 32`.
-/// The modulo is a safety net; in practice the server key length matches.
-/// Returns raw bytes as a String (may contain non-UTF8; lossy conversion matches Ruby behavior).
-pub fn hash_password(password: &str, key: &str) -> String {
+/// Returns raw bytes — the result is not valid UTF-8 in general and must be
+/// sent as a byte slice, not converted through a String.
+pub fn hash_password(password: &str, key: &str) -> Vec<u8> {
     let key_bytes: Vec<u8> = key.trim().bytes().collect();
     if key_bytes.is_empty() {
-        return password.to_string();
+        return password.as_bytes().to_vec();
     }
-    let result: Vec<u8> = password
+    password
         .bytes()
         .enumerate()
         .map(|(i, b)| {
             let k = key_bytes[i % key_bytes.len()];
             (b.wrapping_sub(32) ^ k).wrapping_add(32)
         })
-        .collect();
-    String::from_utf8_lossy(&result).into_owned()
-}
-
-/// TLS certificate verifier that accepts any certificate.
-///
-/// The Ruby reference uses a downloaded self-signed PEM and VERIFY_PEER against it.
-/// For simplicity we accept any cert here; this is equivalent to what Lich does
-/// when the PEM is absent (it downloads on first connect without prior verification).
-#[derive(Debug)]
-struct AcceptAnyCert;
-
-impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        // tokio-rustls uses rustls with aws_lc_rs (not ring) by default
-        rustls::crypto::aws_lc_rs::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
+        .collect()
 }
 
 /// Build a TLS connector that accepts any server certificate.
+///
+/// Uses native-tls (OpenSSL on Linux, SChannel on Windows, SecureTransport on macOS)
+/// for maximum cipher-suite compatibility with the SGE eAccess server, matching
+/// the Ruby/OpenSSL transport used by the reference implementation.
 fn build_tls_connector() -> Result<TlsConnector> {
-    let config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
-        .with_no_client_auth();
-    Ok(TlsConnector::from(Arc::new(config)))
+    let native = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()?;
+    Ok(TlsConnector::from(native))
 }
 
 /// Read a single packet from the TLS stream (up to PACKET_SIZE bytes).
@@ -147,6 +104,63 @@ where
     Ok(String::from_utf8_lossy(&buf[..n]).trim().to_string())
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct CharacterEntry {
+    pub id: String,
+    pub name: String,
+}
+
+/// Connect to eAccess and return the character list for `game_code`.
+/// Runs K→A→M→F→G→P→C. Does NOT send L (login).
+pub async fn list_characters(
+    account: &str,
+    password: &str,
+    game_code: &str,
+) -> Result<Vec<CharacterEntry>> {
+    let connector = build_tls_connector()?;
+    let tcp = TcpStream::connect((SGE_HOST, SGE_PORT)).await?;
+    let mut stream = connector.connect(SGE_HOST, tcp).await?;
+
+    stream.write_all(b"K\n").await?;
+    let key = read_packet(&mut stream).await?;
+    let hash = hash_password(password, &key);
+    let mut auth_cmd = format!("A\t{account}\t").into_bytes();
+    auth_cmd.extend_from_slice(&hash);
+    auth_cmd.push(b'\n');
+    stream.write_all(&auth_cmd).await?;
+    let auth_resp = read_packet(&mut stream).await?;
+    if !auth_resp.contains("KEY\t") {
+        bail!("SGE auth failed: {auth_resp}");
+    }
+    stream.write_all(b"M\n").await?;
+    let _ = read_packet(&mut stream).await?;
+    stream.write_all(format!("F\t{game_code}\n").as_bytes()).await?;
+    let _ = read_packet(&mut stream).await?;
+    stream.write_all(format!("G\t{game_code}\n").as_bytes()).await?;
+    let _ = read_packet(&mut stream).await?;
+    stream.write_all(format!("P\t{game_code}\n").as_bytes()).await?;
+    let _ = read_packet(&mut stream).await?;
+    stream.write_all(b"C\n").await?;
+    let char_resp = read_packet(&mut stream).await?;
+    parse_character_list(&char_resp)
+}
+
+pub fn parse_character_list(resp: &str) -> Result<Vec<CharacterEntry>> {
+    let parts: Vec<&str> = resp.trim().split('\t').collect();
+    let skip = 5; // C + 4 numeric counts
+    let mut entries = vec![];
+    let mut i = skip;
+    while i + 1 < parts.len() {
+        let id = parts[i].to_string();
+        let name = parts[i + 1].to_string();
+        if !id.is_empty() && !name.is_empty() {
+            entries.push(CharacterEntry { id, name });
+        }
+        i += 2;
+    }
+    Ok(entries)
+}
+
 /// Authenticate with the SGE eAccess server and return session credentials.
 ///
 /// Follows the non-legacy protocol path from eaccess.rb:
@@ -159,8 +173,7 @@ pub async fn authenticate(
 ) -> Result<Session> {
     let connector = build_tls_connector()?;
     let tcp = TcpStream::connect((SGE_HOST, SGE_PORT)).await?;
-    let domain = rustls::pki_types::ServerName::try_from(SGE_HOST)?.to_owned();
-    let mut stream = connector.connect(domain, tcp).await?;
+    let mut stream = connector.connect(SGE_HOST, tcp).await?;
 
     // K — request hash key challenge
     stream.write_all(b"K\n").await?;
@@ -170,9 +183,10 @@ pub async fn authenticate(
     // A — authenticate with hashed password
     // eaccess.rb line 93: password[i] = ((password[i] - 32) ^ hashkey[i]) + 32
     let hash = hash_password(password, &key);
-    stream
-        .write_all(format!("A\t{account}\t{hash}\n").as_bytes())
-        .await?;
+    let mut auth_cmd = format!("A\t{account}\t").into_bytes();
+    auth_cmd.extend_from_slice(&hash);
+    auth_cmd.push(b'\n');
+    stream.write_all(&auth_cmd).await?;
     let auth_resp = read_packet(&mut stream).await?;
     debug!("SGE auth: {auth_resp}");
     // eaccess.rb checks for /KEY\t/ match, raises AuthenticationError if not found
@@ -288,11 +302,14 @@ fn parse_session(resp: &str, game: &str, character: &str) -> Result<Session> {
     let mut host = String::new();
     let mut port: u16 = 0;
     let mut key = String::new();
+    let mut raw_fields: Vec<(String, String)> = Vec::new();
 
     for field in body.split('\t') {
         if let Some((k, v)) = field.split_once('=') {
             // Keys are lowercased per eaccess.rb line 142
-            match k.to_lowercase().as_str() {
+            let k_lower = k.to_lowercase();
+            raw_fields.push((k.to_string(), v.to_string()));
+            match k_lower.as_str() {
                 "gamehost" => host = v.to_string(),
                 "gameport" => port = v.parse::<u16>().context("invalid gameport in SGE response")?,
                 "key" => key = v.to_string(),
@@ -311,5 +328,6 @@ fn parse_session(resp: &str, game: &str, character: &str) -> Result<Session> {
         key,
         game: game.to_string(),
         character: character.to_string(),
+        raw_fields,
     })
 }
