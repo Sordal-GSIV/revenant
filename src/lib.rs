@@ -9,3 +9,4 @@ pub mod script_engine;
 pub mod xml_parser;
 pub mod db;
 pub mod lua_api;
+pub mod map;
