@@ -152,6 +152,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let gs = game_state.clone();
         let client_tx_down = client_tx.clone();
         let ds_hooks = engine.downstream_hooks.clone();
+        let ds_lua = engine.lua.clone();
 
         // Downstream: server → parse XML → hook chain → client_writer
         let mut down_handle = tokio::spawn(async move {
@@ -170,15 +171,17 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                 // Always broadcast raw bytes to ds_tx first (for waitfor)
                 let _ = ds_tx.send(Arc::new(raw.clone()));
 
-                // Run downstream hook chain
-                // TODO: process_with_lua for Lua downstream hooks
+                // Run downstream hook chain (including Lua hooks)
                 let result = {
                     let chain = ds_hooks.lock().unwrap();
-                    chain.process_sync(&chunk)
+                    chain.process_with_lua(&ds_lua, &chunk)
+                        .unwrap_or_else(|e| {
+                            warn!("Lua downstream hook error: {e}");
+                            Some(chunk.clone())
+                        })
                 };
                 match result {
                     Some(s) => {
-                        // Hook chain passed the chunk — send to client
                         if let Err(e) = client_tx_down.send(s.into_bytes()) {
                             warn!("client_tx send failed (downstream): {e}");
                             break;
@@ -192,7 +195,6 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
             anyhow::Ok(())
         });
 
-        let us_hooks = engine.upstream_hooks.clone();
         let upstream_tx_up = upstream_tx.clone();
         let engine_up = engine.clone();
 
@@ -217,10 +219,14 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                     };
 
                     if let Some(fwd) = forwarded {
-                        // Run upstream hook chain on forwarded line
+                        // Run upstream hook chain (including Lua hooks)
                         let result = {
-                            let chain = us_hooks.lock().unwrap();
-                            chain.process_sync(&fwd)
+                            let chain = engine_up.upstream_hooks.lock().unwrap();
+                            chain.process_with_lua(&engine_up.lua, &fwd)
+                                .unwrap_or_else(|e| {
+                                    warn!("Lua upstream hook error: {e}");
+                                    Some(fwd.clone())
+                                })
                         };
                         match result {
                             Some(s) => {
