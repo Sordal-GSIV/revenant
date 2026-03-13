@@ -5,6 +5,20 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     let lua = &engine.lua;
     let t = lua.create_table()?;
 
+    // Script.pause(name) — pause a running script
+    let paused = engine.paused.clone();
+    t.set("pause", lua.create_function(move |_, name: String| {
+        paused.lock().unwrap().insert(name);
+        Ok(())
+    })?)?;
+
+    // Script.unpause(name) — resume a paused script
+    let paused = engine.paused.clone();
+    t.set("unpause", lua.create_function(move |_, name: String| {
+        paused.lock().unwrap().remove(&name);
+        Ok(())
+    })?)?;
+
     // Script.kill(name) — abort a running script
     let running = engine.running.clone();
     t.set("kill", lua.create_async_function(move |_, name: String| {

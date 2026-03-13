@@ -19,6 +19,8 @@ pub struct ScriptEngine {
     pub game: Arc<Mutex<String>>,
     /// Optional hook called when a script exits with an error. Used in tests.
     pub script_error_hook: Arc<Mutex<Option<Box<dyn Fn(String, String) + Send + Sync>>>>,
+    /// Set of script names that are currently paused.
+    pub paused: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl ScriptEngine {
@@ -37,6 +39,7 @@ impl ScriptEngine {
             character: Arc::new(Mutex::new(String::new())),
             game: Arc::new(Mutex::new("GS3".to_string())),
             script_error_hook: Arc::new(Mutex::new(None)),
+            paused: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -69,11 +72,17 @@ impl ScriptEngine {
         println!("{msg}");
     }
 
-    /// Pause all running scripts. (Implemented in Task 4.)
-    pub fn pause_all(&self) {}
+    /// Pause all running scripts.
+    pub fn pause_all(&self) {
+        let names: Vec<String> = self.running.lock().unwrap().keys().cloned().collect();
+        let mut p = self.paused.lock().unwrap();
+        for n in names { p.insert(n); }
+    }
 
-    /// Unpause all running scripts. (Implemented in Task 4.)
-    pub fn unpause_all(&self) {}
+    /// Unpause all running scripts.
+    pub fn unpause_all(&self) {
+        self.paused.lock().unwrap().clear();
+    }
 
     pub fn set_scripts_dir(&self, dir: &str) {
         *self.scripts_dir.lock().unwrap() = dir.to_string();
@@ -114,11 +123,15 @@ impl ScriptEngine {
         }
     }
 
-    /// Pause a named script. (Implemented in Task 4.)
-    pub fn pause_script(&self, _name: &str) {}
+    /// Pause a named script.
+    pub fn pause_script(&self, name: &str) {
+        self.paused.lock().unwrap().insert(name.to_string());
+    }
 
-    /// Unpause a named script. (Implemented in Task 4.)
-    pub fn unpause_script(&self, _name: &str) {}
+    /// Unpause a named script.
+    pub fn unpause_script(&self, name: &str) {
+        self.paused.lock().unwrap().remove(name);
+    }
 
     /// Launch a named script from a file path as a tokio task.
     /// `args` follows Lich5 convention: args[0] = full arg string, args[1..] = individual tokens.
