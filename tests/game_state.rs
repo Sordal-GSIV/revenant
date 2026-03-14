@@ -160,6 +160,8 @@ fn test_apply_indicator_poisoned() {
     let mut gs = GameState::default();
     gs.apply(XmlEvent::Indicator { name: "IconPOISONED".into(), visible: true });
     assert!(gs.poisoned);
+    gs.apply(XmlEvent::Indicator { name: "IconPOISONED".into(), visible: false });
+    assert!(!gs.poisoned);
 }
 
 #[test]
@@ -167,6 +169,8 @@ fn test_apply_indicator_diseased() {
     let mut gs = GameState::default();
     gs.apply(XmlEvent::Indicator { name: "IconDISEASED".into(), visible: true });
     assert!(gs.diseased);
+    gs.apply(XmlEvent::Indicator { name: "IconDISEASED".into(), visible: false });
+    assert!(!gs.diseased);
 }
 
 #[test]
@@ -174,6 +178,8 @@ fn test_apply_indicator_hidden() {
     let mut gs = GameState::default();
     gs.apply(XmlEvent::Indicator { name: "IconHIDDEN".into(), visible: true });
     assert!(gs.hidden);
+    gs.apply(XmlEvent::Indicator { name: "IconHIDDEN".into(), visible: false });
+    assert!(!gs.hidden);
 }
 
 #[test]
@@ -181,6 +187,8 @@ fn test_apply_indicator_invisible() {
     let mut gs = GameState::default();
     gs.apply(XmlEvent::Indicator { name: "IconINVISIBLE".into(), visible: true });
     assert!(gs.invisible);
+    gs.apply(XmlEvent::Indicator { name: "IconINVISIBLE".into(), visible: false });
+    assert!(!gs.invisible);
 }
 
 #[test]
@@ -188,6 +196,8 @@ fn test_apply_indicator_webbed() {
     let mut gs = GameState::default();
     gs.apply(XmlEvent::Indicator { name: "IconWEBBED".into(), visible: true });
     assert!(gs.webbed);
+    gs.apply(XmlEvent::Indicator { name: "IconWEBBED".into(), visible: false });
+    assert!(!gs.webbed);
 }
 
 #[test]
@@ -195,6 +205,8 @@ fn test_apply_indicator_joined() {
     let mut gs = GameState::default();
     gs.apply(XmlEvent::Indicator { name: "IconJOINED".into(), visible: true });
     assert!(gs.joined);
+    gs.apply(XmlEvent::Indicator { name: "IconJOINED".into(), visible: false });
+    assert!(!gs.joined);
 }
 
 #[test]

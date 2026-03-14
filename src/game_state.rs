@@ -253,6 +253,7 @@ impl GameState {
                 "IconINVISIBLE" => self.invisible = visible,
                 "IconWEBBED"    => self.webbed = visible,
                 "IconJOINED"    => self.joined = visible,
+                // calmed, cutthroat, silenced, bound: Icon names not yet confirmed from GS protocol
                 _ => {}
             },
             XmlEvent::ActiveSpell { name, duration } => {
