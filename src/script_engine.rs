@@ -2,7 +2,7 @@ use anyhow::Result;
 use crate::game_obj::GameObjRegistry;
 use crate::map::MapData;
 use mlua::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
@@ -49,6 +49,14 @@ pub struct ScriptEngine {
     pub hidden: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Scripts with echo() suppressed.
     pub no_echo: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// Broadcast channel for upstream (player input) bytes — scripts subscribe to this.
+    pub upstream_broadcast_tx: Arc<Mutex<Option<tokio::sync::broadcast::Sender<Vec<u8>>>>>,
+    /// Set of script names currently listening to upstream.
+    pub want_upstream: Arc<Mutex<HashSet<String>>>,
+    /// Per-script upstream line buffer senders.
+    pub upstream_lines_tx: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
+    /// Per-script upstream line buffer receivers.
+    pub upstream_lines_rx: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<String>>>>>>,
     pub infomon: Arc<Mutex<Option<crate::infomon::Infomon>>>,
     pub spell_list: Arc<RwLock<Option<Arc<crate::spell_data::SpellList>>>>,
     pub type_data: Arc<RwLock<Option<Arc<crate::type_data::TypeData>>>>,
@@ -87,6 +95,10 @@ impl ScriptEngine {
             no_pause_all: Arc::new(Mutex::new(std::collections::HashSet::new())),
             hidden: Arc::new(Mutex::new(std::collections::HashSet::new())),
             no_echo: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            upstream_broadcast_tx: Arc::new(Mutex::new(None)),
+            want_upstream: Arc::new(Mutex::new(HashSet::new())),
+            upstream_lines_tx: Arc::new(Mutex::new(HashMap::new())),
+            upstream_lines_rx: Arc::new(Mutex::new(HashMap::new())),
             infomon: Arc::new(Mutex::new(None)),
             spell_list: Arc::new(RwLock::new(None)),
             type_data: Arc::new(RwLock::new(None)),
@@ -116,6 +128,10 @@ impl ScriptEngine {
 
     pub fn set_downstream_channel(&self, tx: tokio::sync::broadcast::Sender<Arc<Vec<u8>>>) {
         *self.downstream_tx.lock().unwrap() = Some(tx);
+    }
+
+    pub fn set_upstream_broadcast(&self, tx: tokio::sync::broadcast::Sender<Vec<u8>>) {
+        *self.upstream_broadcast_tx.lock().unwrap() = Some(tx);
     }
 
     pub fn set_respond_sink<F: Fn(String) + Send + Sync + 'static>(&self, f: F) {
@@ -205,6 +221,9 @@ impl ScriptEngine {
         self.script_lines_tx.lock().unwrap().remove(name);
         self.script_lines_rx.lock().unwrap().remove(name);
         self.at_exit_hooks.lock().unwrap().remove(name);
+        self.want_upstream.lock().unwrap().remove(name);
+        self.upstream_lines_tx.lock().unwrap().remove(name);
+        self.upstream_lines_rx.lock().unwrap().remove(name);
     }
 
     /// Kill all running scripts (respects no_kill_all protection).
@@ -227,10 +246,16 @@ impl ScriptEngine {
             let mut tx_map = self.script_lines_tx.lock().unwrap();
             let mut rx_map = self.script_lines_rx.lock().unwrap();
             let mut hooks_map = self.at_exit_hooks.lock().unwrap();
+            let mut want_up = self.want_upstream.lock().unwrap();
+            let mut up_tx = self.upstream_lines_tx.lock().unwrap();
+            let mut up_rx = self.upstream_lines_rx.lock().unwrap();
             for (name, _) in &to_kill {
                 tx_map.remove(name);
                 rx_map.remove(name);
                 hooks_map.remove(name);
+                want_up.remove(name);
+                up_tx.remove(name);
+                up_rx.remove(name);
             }
         }
         for (_name, handle) in to_kill {

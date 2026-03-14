@@ -126,6 +126,10 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let game_objs: Arc<Mutex<GameObjRegistry>> = Arc::new(Mutex::new(GameObjRegistry::new()));
         engine.set_game_objs(game_objs.clone());
         let go_arc = game_objs.clone();
+        // Broadcast channel: upstream raw bytes → listening scripts (upstream_get)
+        let (upstream_broadcast, _) = broadcast::channel::<Vec<u8>>(256);
+        engine.set_upstream_broadcast(upstream_broadcast.clone());
+
         engine.set_downstream_channel(downstream_tx.clone());
 
         // Wire upstream sink: Lua calls sink(line) → upstream_tx
@@ -357,6 +361,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         });
 
         let upstream_tx_up = upstream_tx.clone();
+        let upstream_broadcast_up = upstream_broadcast.clone();
         let engine_up = engine.clone();
 
         // Upstream: client → line-buffer → hook chain → upstream_tx
@@ -380,6 +385,9 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                     };
 
                     if let Some(fwd) = forwarded {
+                        // Broadcast upstream line to listening scripts
+                        let _ = upstream_broadcast_up.send(fwd.trim_end().as_bytes().to_vec());
+
                         // Run upstream hook chain (including Lua hooks)
                         let result = {
                             let chain = engine_up.upstream_hooks.lock().unwrap();
@@ -440,6 +448,10 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         client_handle.abort();
         *engine.upstream_sink.lock().unwrap() = None;
         *engine.downstream_tx.lock().unwrap() = None;
+        *engine.upstream_broadcast_tx.lock().unwrap() = None;
+        engine.want_upstream.lock().unwrap().clear();
+        engine.upstream_lines_tx.lock().unwrap().clear();
+        engine.upstream_lines_rx.lock().unwrap().clear();
         *engine.respond_sink.lock().unwrap() = None;
         *engine.game_state.lock().unwrap() = None;
         engine.clear_game_objs();

@@ -371,5 +371,148 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
+    // toggle_upstream() — enable/disable upstream listening for current script
+    let ubt = engine.upstream_broadcast_tx.clone();
+    let want_up = engine.want_upstream.clone();
+    let up_lines_tx = engine.upstream_lines_tx.clone();
+    let up_lines_rx = engine.upstream_lines_rx.clone();
+    let thread_names_tu = engine.thread_names.clone();
+    globals.set("toggle_upstream", lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = thread_names_tu.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("toggle_upstream() called outside script context".into()))?;
+
+        let mut set = want_up.lock().unwrap();
+        if set.contains(&script_name) {
+            set.remove(&script_name);
+            up_lines_tx.lock().unwrap().remove(&script_name);
+            up_lines_rx.lock().unwrap().remove(&script_name);
+        } else {
+            set.insert(script_name.clone());
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            up_lines_tx.lock().unwrap().insert(script_name.clone(), tx.clone());
+            up_lines_rx.lock().unwrap().insert(
+                script_name.clone(),
+                std::sync::Arc::new(tokio::sync::Mutex::new(rx)),
+            );
+            // Spawn feeder: upstream broadcast → per-script MPSC
+            if let Some(broadcast_tx) = ubt.lock().unwrap().as_ref() {
+                let mut broadcast_rx = broadcast_tx.subscribe();
+                let feeder_tx = tx;
+                tokio::spawn(async move {
+                    loop {
+                        match broadcast_rx.recv().await {
+                            Ok(bytes) => {
+                                let text = String::from_utf8_lossy(&bytes);
+                                for line in text.lines() {
+                                    let trimmed = line.trim_end();
+                                    if !trimmed.is_empty() {
+                                        if feeder_tx.send(trimmed.to_string()).is_err() {
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                        }
+                    }
+                });
+            }
+        }
+        Ok(())
+    })?)?;
+
+    // upstream_get() — block until next upstream line for this script
+    let up_lines_rx_get = engine.upstream_lines_rx.clone();
+    let thread_names_ug = engine.thread_names.clone();
+    globals.set("upstream_get", lua.create_async_function(move |lua, ()| {
+        let up_lines_rx = up_lines_rx_get.clone();
+        let thread_names = thread_names_ug.clone();
+        async move {
+            let ptr = lua.current_thread().to_pointer() as usize;
+            let script_name: String = {
+                let map = thread_names.lock().unwrap();
+                map.get(&ptr).cloned()
+                    .ok_or_else(|| LuaError::RuntimeError("upstream_get() called outside script context".into()))?
+            };
+            let rx = {
+                let map = up_lines_rx.lock().unwrap();
+                map.get(&script_name).cloned()
+                    .ok_or_else(|| LuaError::RuntimeError("upstream not enabled — call toggle_upstream() first".into()))?
+            };
+            let mut rx_guard = rx.lock().await;
+            match rx_guard.recv().await {
+                Some(line) => Ok(line),
+                None => Err(LuaError::RuntimeError("upstream buffer closed".into())),
+            }
+        }
+    })?)?;
+
+    // upstream_get_noblock() — non-blocking variant of upstream_get()
+    let up_lines_rx_nb = engine.upstream_lines_rx.clone();
+    let thread_names_unb = engine.thread_names.clone();
+    globals.set("upstream_get_noblock", lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = {
+            let map = thread_names_unb.lock().unwrap();
+            map.get(&ptr).cloned()
+                .ok_or_else(|| LuaError::RuntimeError("upstream_get_noblock() called outside script context".into()))?
+        };
+        let rx = {
+            let map = up_lines_rx_nb.lock().unwrap();
+            map.get(&script_name).cloned()
+                .ok_or_else(|| LuaError::RuntimeError("upstream not enabled — call toggle_upstream() first".into()))?
+        };
+        let result = match rx.try_lock() {
+            Ok(mut guard) => match guard.try_recv() {
+                Ok(line) => Ok(mlua::Value::String(lua.create_string(&line)?)),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(mlua::Value::Nil),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) =>
+                    Err(LuaError::RuntimeError("upstream buffer closed".into())),
+            },
+            Err(_) => Ok(mlua::Value::Nil),
+        };
+        result
+    })?)?;
+
+    // upstream_waitfor(pattern [, timeout_secs]) — block until pattern appears in upstream
+    let ubt_wf = engine.upstream_broadcast_tx.clone();
+    globals.set("upstream_waitfor", lua.create_async_function(move |_, (pattern, timeout): (String, Option<f64>)| {
+        let ubt = ubt_wf.clone();
+        async move {
+            let mut rx = match ubt.lock().unwrap().as_ref() {
+                Some(tx) => tx.subscribe(),
+                None => return Ok(()),
+            };
+            let deadline = timeout.map(|t| {
+                tokio::time::Instant::now() + tokio::time::Duration::from_secs_f64(t)
+            });
+            loop {
+                let recv = rx.recv();
+                let bytes = match deadline {
+                    Some(d) => match tokio::time::timeout_at(d, recv).await {
+                        Ok(result) => result,
+                        Err(_) => return Ok(()),
+                    },
+                    None => recv.await,
+                };
+                match bytes {
+                    Ok(b) => {
+                        let text = String::from_utf8_lossy(&b);
+                        if text.contains(pattern.as_str()) {
+                            return Ok(());
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return Err(LuaError::RuntimeError("upstream channel closed".into()));
+                    }
+                }
+            }
+        }
+    })?)?;
+
     Ok(())
 }
