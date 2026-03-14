@@ -237,6 +237,11 @@ async fn test_lib_vars_typed_getters() {
         vars.set("name", "Korrga")
         assert(vars.get("name") == "Korrga")
 
+        -- get_string
+        vars.set("label", "hello")
+        assert(vars.get_string("label") == "hello")
+        assert(vars.get_string("missing_str", "default") == "default")
+
         -- get_number coercion
         vars.set("delay", "1.5")
         assert(vars.get_number("delay") == 1.5)
