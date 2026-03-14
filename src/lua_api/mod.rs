@@ -1,3 +1,4 @@
+pub mod crypto;
 pub mod game_state;
 pub mod game_obj;
 pub mod hooks;
@@ -14,6 +15,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     primitives::register(engine)?;
     game_state::register(engine)?;
     hooks::register(engine)?;
+    crypto::register(engine).map_err(|e| anyhow::anyhow!("crypto register: {e}"))?;
     map::register(engine).map_err(|e| anyhow::anyhow!("map register: {e}"))?;
     game_obj::register(engine).map_err(|e| anyhow::anyhow!("game_obj register: {e}"))?;
     script::register(engine)?;
