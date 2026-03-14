@@ -27,6 +27,7 @@ pub enum XmlEvent {
     RightHand { item: Option<String> },
     LeftHand { item: Option<String> },
     Level { value: u32 },
+    Experience { value: u64 },
     Text { content: String },
     StreamWindow { id: String, title: String },
     Mode { id: String, room_id: Option<u32> },
@@ -435,6 +436,11 @@ fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
                 "spirit"        => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Spirit { value: v, max: m }) }
                 "stamina"       => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Stamina { value: v, max: m }) }
                 "concentration" => { let (v, m) = parse_vital(attrs); Some(XmlEvent::Concentration { value: v, max: m }) }
+                "nextLvlPB" => {
+                    attr(attrs, "value")
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .map(|val| XmlEvent::Experience { value: val })
+                }
                 _ => None,
             }
         }

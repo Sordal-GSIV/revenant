@@ -222,6 +222,7 @@ impl GameState {
             XmlEvent::PreparedSpell { name }       => self.prepared_spell = Some(name),
             XmlEvent::SpellCleared                 => self.prepared_spell = None,
             XmlEvent::Level { value }              => self.level = value,
+            XmlEvent::Experience { value }         => self.experience = value,
             XmlEvent::RightHand { item }           => self.right_hand = item,
             XmlEvent::LeftHand { item }            => self.left_hand = item,
             XmlEvent::Mode { room_id, .. }         => { if let Some(id) = room_id { self.room_id = Some(id); } }

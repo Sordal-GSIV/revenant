@@ -137,3 +137,10 @@ fn test_room_count_increments_on_room_id() {
     gs.apply(XmlEvent::RoomId { id: 2 });
     assert_eq!(gs.room_count, 2);
 }
+
+#[test]
+fn test_apply_experience() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Experience { value: 54321 });
+    assert_eq!(gs.experience, 54321);
+}
