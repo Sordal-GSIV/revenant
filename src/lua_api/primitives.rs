@@ -189,6 +189,19 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     globals.set("get_noblock", get_noblock_fn.clone())?;
     globals.set("nget", get_noblock_fn)?;
 
+    // reget(n) — return last N lines from game_log
+    let game_log = engine.game_log.clone();
+    globals.set("reget", lua.create_function(move |lua, n: usize| {
+        let log = game_log.lock().unwrap();
+        let len = log.len();
+        let start = if n >= len { 0 } else { len - n };
+        let table = lua.create_table()?;
+        for (i, line) in log.iter().skip(start).enumerate() {
+            table.set(i + 1, line.as_str())?;
+        }
+        Ok(table)
+    })?)?;
+
     // fput(cmd) — put + wait for <prompt> from downstream
     let sink = engine.upstream_sink.clone();
     let dtx = engine.downstream_tx.clone();

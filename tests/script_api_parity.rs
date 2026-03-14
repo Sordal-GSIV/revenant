@@ -86,6 +86,27 @@ async fn test_echo_prefixes_script_name() {
 }
 
 #[tokio::test]
+async fn test_reget_returns_recent_lines() {
+    let engine = ScriptEngine::new();
+    engine.install_lua_api().unwrap();
+
+    // Pre-populate game_log
+    {
+        let mut log = engine.game_log.lock().unwrap();
+        log.push_back("line one".to_string());
+        log.push_back("line two".to_string());
+        log.push_back("line three".to_string());
+    }
+
+    engine.eval_lua(r#"
+        local lines = reget(2)
+        assert(#lines == 2, "expected 2 lines, got " .. #lines)
+        assert(lines[1] == "line two", "expected 'line two', got: " .. lines[1])
+        assert(lines[2] == "line three", "expected 'line three', got: " .. lines[2])
+    "#).await.unwrap();
+}
+
+#[tokio::test]
 async fn test_per_thread_identity_survives_yield() {
     let engine = ScriptEngine::new();
     engine.install_lua_api().unwrap();
