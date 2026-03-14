@@ -1,5 +1,6 @@
 pub mod char;
 pub mod crypto;
+pub mod room;
 pub mod file;
 pub mod game_state;
 pub mod game_obj;
@@ -19,6 +20,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     primitives::register(engine)?;
     game_state::register(engine)?;
     char::register(engine).map_err(|e| anyhow::anyhow!("char register: {e}"))?;
+    room::register(engine).map_err(|e| anyhow::anyhow!("room register: {e}"))?;
     hooks::register(engine)?;
     crypto::register(engine).map_err(|e| anyhow::anyhow!("crypto register: {e}"))?;
     file::register(engine).map_err(|e| anyhow::anyhow!("file register: {e}"))?;
