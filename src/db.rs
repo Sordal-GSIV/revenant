@@ -120,6 +120,7 @@ impl Db {
     }
 
     pub fn set_char_data_batch(&self, char: &str, game: &str, pairs: &[(&str, &str)]) -> Result<()> {
+        if pairs.is_empty() { return Ok(()); }
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
         {
@@ -134,10 +135,11 @@ impl Db {
     }
 
     pub fn get_char_data_prefix(&self, char: &str, game: &str, prefix: &str) -> Result<Vec<(String, String)>> {
-        let pattern = format!("{prefix}%");
+        let escaped = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let pattern = format!("{escaped}%");
         let conn = self.conn.lock().unwrap();
         let mut s = conn.prepare(
-            "SELECT key, value FROM char_data WHERE character=?1 AND game=?2 AND key LIKE ?3")?;
+            "SELECT key, value FROM char_data WHERE character=?1 AND game=?2 AND key LIKE ?3 ESCAPE '\\'")?;
         let rows = s.query_map(params![char, game, pattern], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
