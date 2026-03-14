@@ -264,6 +264,42 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(())
     })?)?;
 
+    // no_kill_all() — toggle kill protection for current script
+    let no_kill = engine.no_kill_all.clone();
+    let thread_names_nka = engine.thread_names.clone();
+    globals.set("no_kill_all", lua.create_function(move |lua, ()| {
+        let thread = lua.current_thread();
+        let ptr = thread.to_pointer() as usize;
+        let script_name: String = thread_names_nka.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("no_kill_all() called outside script context".into()))?;
+        let mut set = no_kill.lock().unwrap();
+        if set.contains(&script_name) {
+            set.remove(&script_name);
+        } else {
+            set.insert(script_name);
+        }
+        Ok(())
+    })?)?;
+
+    // no_pause_all() — toggle pause protection for current script
+    let no_pause = engine.no_pause_all.clone();
+    let thread_names_npa = engine.thread_names.clone();
+    globals.set("no_pause_all", lua.create_function(move |lua, ()| {
+        let thread = lua.current_thread();
+        let ptr = thread.to_pointer() as usize;
+        let script_name: String = thread_names_npa.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("no_pause_all() called outside script context".into()))?;
+        let mut set = no_pause.lock().unwrap();
+        if set.contains(&script_name) {
+            set.remove(&script_name);
+        } else {
+            set.insert(script_name);
+        }
+        Ok(())
+    })?)?;
+
     // Build a metatable for the Script table so that Script.vars and Script.name
     // are computed properties (not stored values). The __index metamethod intercepts
     // field access and returns the current value from the per-thread identity map.

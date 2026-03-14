@@ -41,6 +41,10 @@ pub struct ScriptEngine {
     pub script_lines_rx: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<String>>>>>>,
     /// Per-script at-exit callback registry keys (Lua registry references). LIFO order.
     pub at_exit_hooks: Arc<Mutex<HashMap<String, Vec<mlua::RegistryKey>>>>,
+    /// Scripts protected from kill_all.
+    pub no_kill_all: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// Scripts protected from pause_all.
+    pub no_pause_all: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl ScriptEngine {
@@ -69,6 +73,8 @@ impl ScriptEngine {
             script_lines_tx: Arc::new(Mutex::new(HashMap::new())),
             script_lines_rx: Arc::new(Mutex::new(HashMap::new())),
             at_exit_hooks: Arc::new(Mutex::new(HashMap::new())),
+            no_kill_all: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            no_pause_all: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -121,9 +127,12 @@ impl ScriptEngine {
         }
     }
 
-    /// Pause all running scripts.
+    /// Pause all running scripts (respects no_pause_all protection).
     pub fn pause_all(&self) {
-        let names: Vec<String> = self.running.lock().unwrap().keys().cloned().collect();
+        let protected = self.no_pause_all.lock().unwrap().clone();
+        let names: Vec<String> = self.running.lock().unwrap().keys()
+            .filter(|n| !protected.contains(*n))
+            .cloned().collect();
         let mut p = self.paused.lock().unwrap();
         for n in names { p.insert(n); }
     }
@@ -172,18 +181,31 @@ impl ScriptEngine {
         self.script_lines_rx.lock().unwrap().remove(name);
     }
 
-    /// Kill all running scripts.
+    /// Kill all running scripts (respects no_kill_all protection).
     pub async fn kill_all(&self) {
-        let handles: Vec<_> = self.running.lock().unwrap().drain().collect();
+        let protected = self.no_kill_all.lock().unwrap().clone();
+        let mut to_kill: Vec<(String, JoinHandle<()>)> = Vec::new();
+        let mut to_keep: HashMap<String, JoinHandle<()>> = HashMap::new();
+        {
+            let mut running = self.running.lock().unwrap();
+            for (name, handle) in running.drain() {
+                if protected.contains(&name) {
+                    to_keep.insert(name, handle);
+                } else {
+                    to_kill.push((name, handle));
+                }
+            }
+            *running = to_keep;
+        }
         {
             let mut tx_map = self.script_lines_tx.lock().unwrap();
             let mut rx_map = self.script_lines_rx.lock().unwrap();
-            for (name, _) in &handles {
+            for (name, _) in &to_kill {
                 tx_map.remove(name);
                 rx_map.remove(name);
             }
         }
-        for (_name, handle) in handles {
+        for (_name, handle) in to_kill {
             handle.abort();
         }
     }

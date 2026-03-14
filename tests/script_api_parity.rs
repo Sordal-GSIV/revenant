@@ -572,3 +572,40 @@ async fn test_script_exists_finds_lua_file() {
     "#).await.unwrap();
 }
 
+#[tokio::test]
+async fn test_no_kill_all_protects_script() {
+    let engine = ScriptEngine::new();
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp_protected = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp_protected.path(), r#"
+        no_kill_all()
+        pause(9999)
+    "#).unwrap();
+
+    let tmp_normal = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp_normal.path(), "pause(9999)").unwrap();
+
+    engine.start_script("protected", tmp_protected.path().to_str().unwrap(), vec![]).unwrap();
+    engine.start_script("normal", tmp_normal.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    assert!(engine.is_running("protected"));
+    assert!(engine.is_running("normal"));
+
+    engine.kill_all().await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    assert!(engine.is_running("protected"), "protected script should survive kill_all");
+    assert!(!engine.is_running("normal"), "normal script should be killed");
+
+    // Cleanup
+    engine.kill_script("protected").await;
+}
+
