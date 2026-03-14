@@ -149,6 +149,19 @@ async fn test_settings_independent_of_char_settings() {
 }
 
 #[tokio::test]
+async fn test_settings_nil_deletes() {
+    use revenant::db::Db;
+    let engine = ScriptEngine::new();
+    engine.set_db(Db::open(":memory:").unwrap(), "TestChar", "GS3");
+    engine.install_lua_api().unwrap();
+
+    engine.eval_lua(r#"Settings["temp"] = "value""#).await.unwrap();
+    engine.eval_lua(r#"assert(Settings["temp"] == "value")"#).await.unwrap();
+    engine.eval_lua(r#"Settings["temp"] = nil"#).await.unwrap();
+    engine.eval_lua(r#"assert(Settings["temp"] == nil, "nil assignment should delete key")"#).await.unwrap();
+}
+
+#[tokio::test]
 async fn test_script_kill_from_lua() {
     let engine = ScriptEngine::new();
     let tmp = tempfile::NamedTempFile::new().unwrap();
