@@ -122,6 +122,33 @@ async fn test_script_run_and_kill() {
 }
 
 #[tokio::test]
+async fn test_settings_global_roundtrip() {
+    use revenant::db::Db;
+    let engine = ScriptEngine::new();
+    engine.set_db(Db::open(":memory:").unwrap(), "TestChar", "GS3");
+    engine.install_lua_api().unwrap();
+
+    engine.eval_lua(r#"Settings["my_key"] = "hello""#).await.unwrap();
+    engine.eval_lua(r#"assert(Settings["my_key"] == "hello", "roundtrip failed")"#).await.unwrap();
+    engine.eval_lua(r#"assert(Settings["missing"] == nil, "missing should be nil")"#).await.unwrap();
+    engine.eval_lua(r#"Settings["flag"] = true"#).await.unwrap();
+    engine.eval_lua(r#"assert(Settings["flag"] == "true")"#).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_settings_independent_of_char_settings() {
+    use revenant::db::Db;
+    let engine = ScriptEngine::new();
+    engine.set_db(Db::open(":memory:").unwrap(), "TestChar", "GS3");
+    engine.install_lua_api().unwrap();
+
+    engine.eval_lua(r#"Settings["shared"] = "global_val""#).await.unwrap();
+    engine.eval_lua(r#"CharSettings["shared"] = "char_val""#).await.unwrap();
+    engine.eval_lua(r#"assert(Settings["shared"] == "global_val")"#).await.unwrap();
+    engine.eval_lua(r#"assert(CharSettings["shared"] == "char_val")"#).await.unwrap();
+}
+
+#[tokio::test]
 async fn test_script_kill_from_lua() {
     let engine = ScriptEngine::new();
     let tmp = tempfile::NamedTempFile::new().unwrap();
