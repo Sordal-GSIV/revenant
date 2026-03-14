@@ -205,3 +205,53 @@ async fn test_script_running_returns_true_when_running() {
         assert(Script.running("daemon") == true, "daemon should be running")
     "#).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_lib_vars_typed_getters() {
+    use revenant::db::Db;
+    use tempfile::TempDir;
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("lib")).unwrap();
+    std::fs::write(
+        tmp.path().join("lib/vars.lua"),
+        include_str!("../../scripts/lib/vars.lua"),
+    ).unwrap();
+
+    let engine = ScriptEngine::new();
+    engine.set_db(Db::open(":memory:").unwrap(), "TestChar", "GS3");
+    engine.set_scripts_dir(tmp.path().to_str().unwrap());
+    engine.install_lua_api().unwrap();
+    engine.set_script_error_hook(|name, err| panic!("{name}: {err}"));
+
+    let scripts_dir = tmp.path().to_str().unwrap();
+    engine.eval_lua(&format!(
+        r#"
+        package.path = "{}/?.lua;" .. package.path
+        local vars = require("lib/vars")
+
+        -- get with default
+        assert(vars.get("nonexistent", "fallback") == "fallback")
+        assert(vars.get("nonexistent") == nil)
+
+        -- set and get
+        vars.set("name", "Korrga")
+        assert(vars.get("name") == "Korrga")
+
+        -- get_number coercion
+        vars.set("delay", "1.5")
+        assert(vars.get_number("delay") == 1.5)
+        assert(vars.get_number("missing", 3.0) == 3.0)
+
+        -- get_bool coercion
+        vars.set("hunting", "true")
+        assert(vars.get_bool("hunting") == true)
+        vars.set("skin", "false")
+        assert(vars.get_bool("skin") == false)
+
+        -- unset
+        vars.unset("name")
+        assert(vars.get("name") == nil)
+        "#,
+        scripts_dir
+    )).await.unwrap();
+}

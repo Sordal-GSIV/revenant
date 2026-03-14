@@ -79,4 +79,11 @@ impl Db {
             params![game, key, value])?;
         Ok(())
     }
+
+    pub fn delete_user_var(&self, game: &str, key: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM user_vars WHERE game=?1 AND key=?2",
+            params![game, key])?;
+        Ok(())
+    }
 }

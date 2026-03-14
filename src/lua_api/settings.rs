@@ -66,12 +66,17 @@ fn register_user_vars(engine: &ScriptEngine) -> LuaResult<()> {
 
     let (db2, g2) = (db.clone(), game.clone());
     mt.set("__newindex", lua.create_function(move |lua, (_t, key, val): (LuaTable, String, LuaValue)| {
-        let tostring: LuaFunction = lua.globals().get("tostring")?;
-        let s: String = tostring.call(val)?;
         let guard = db2.lock().unwrap();
         let db = match guard.as_ref() { Some(d) => d, None => return Ok(()) };
-        db.set_user_var(&g2.lock().unwrap(), &key, &s)
-            .map_err(|e| LuaError::RuntimeError(e.to_string()))
+        if matches!(val, LuaValue::Nil) {
+            db.delete_user_var(&g2.lock().unwrap(), &key)
+                .map_err(|e| LuaError::RuntimeError(e.to_string()))
+        } else {
+            let tostring: LuaFunction = lua.globals().get("tostring")?;
+            let s: String = tostring.call(val)?;
+            db.set_user_var(&g2.lock().unwrap(), &key, &s)
+                .map_err(|e| LuaError::RuntimeError(e.to_string()))
+        }
     })?)?;
 
     t.set_metatable(Some(mt));
