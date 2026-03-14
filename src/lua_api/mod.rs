@@ -11,6 +11,7 @@ pub mod map;
 pub mod primitives;
 pub mod script;
 pub mod settings;
+pub mod skills;
 pub mod stats;
 pub mod version;
 
@@ -31,6 +32,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     script::register(engine)?;
     settings::register(engine)?;
     stats::register(engine).map_err(|e| anyhow::anyhow!("stats register: {e}"))?;
+    skills::register(engine).map_err(|e| anyhow::anyhow!("skills register: {e}"))?;
     json::register(engine).map_err(|e| anyhow::anyhow!("json register: {e}"))?;
     version::register(engine).map_err(|e| anyhow::anyhow!("version register: {e}"))?;
     register_lua_builtins(engine)?;
