@@ -119,8 +119,24 @@ fn make_window_table(
 
     // close()
     let gs2 = gs.clone();
+    let cbs2 = cbs.clone();
     t.set("close", lua.create_function(move |_, _self: LuaValue| {
-        gs2.lock().unwrap().windows.remove(&win_id);
+        let mut state = gs2.lock().unwrap();
+        // Collect widget IDs owned by this window
+        let widget_ids: Vec<WidgetId> = state.widget_window.iter()
+            .filter(|(_, wid)| **wid == win_id)
+            .map(|(id, _)| *id)
+            .collect();
+        // Clean up widget data
+        for wid in &widget_ids {
+            state.widgets.remove(wid);
+            state.children.remove(wid);
+        }
+        state.widget_window.retain(|_, wid| *wid != win_id);
+        state.windows.remove(&win_id);
+        drop(state);
+        // Clean up callbacks
+        cbs2.lock().unwrap().window_callbacks.remove(&win_id);
         Ok(())
     })?)?;
 
@@ -406,8 +422,11 @@ fn register_widget_ctors(
         gui.set("scroll", lua.create_function(move |lua, child: LuaTable| {
             let child_id: WidgetId = child.get("_id")?;
             let id = next_widget_id();
-            gs2.lock().unwrap().widgets.insert(id, WidgetData::Scroll);
-            gs2.lock().unwrap().children.insert(id, vec![child_id]);
+            {
+                let mut s = gs2.lock().unwrap();
+                s.widgets.insert(id, WidgetData::Scroll);
+                s.children.insert(id, vec![child_id]);
+            }
             make_base_widget(lua, id, gs2.clone())
         })?)?;
     }
@@ -705,6 +724,15 @@ async fn gui_event_loop(
                 let _ = cb.call_async::<()>(LuaValue::Nil).await;
             }
             continue;
+        }
+
+        // ── InputChanged: write text back to widget state ─────────────────
+        if let GuiEvent::InputChanged { widget_id, ref text, .. } = event {
+            let mut s = gs.lock().unwrap();
+            if let Some(WidgetData::Input { text: ref mut v, .. }) = s.widgets.get_mut(&widget_id) {
+                *v = text.clone();
+                s.dirty = true;
+            }
         }
 
         // ── ButtonClicked: check widget waiter, then window-click waiter ──
