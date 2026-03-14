@@ -119,6 +119,73 @@ impl MapData {
         path.reverse();
         if path.is_empty() { None } else { Some(path) }
     }
+
+    /// Return sorted list of all room IDs.
+    pub fn room_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.rooms.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Find the nearest room with the given tag using Dijkstra.
+    /// Returns (room_id, path_commands) or None if no tagged room is reachable.
+    pub fn find_nearest_by_tag(&self, from_id: u32, tag: &str) -> Option<(u32, Vec<String>)> {
+        if !self.rooms.contains_key(&from_id) { return None; }
+        let tag_lower = tag.to_lowercase();
+
+        // Check if current room has the tag
+        if let Some(room) = self.rooms.get(&from_id) {
+            if room.tags.iter().any(|t| t.to_lowercase() == tag_lower) {
+                return Some((from_id, vec![]));
+            }
+        }
+
+        // Dijkstra — same structure as find_path but stops at first tagged room
+        let mut dist: HashMap<u32, (f64, u32, String)> = HashMap::new();
+        let mut heap: BinaryHeap<MinHeapEntry> = BinaryHeap::new();
+
+        dist.insert(from_id, (0.0, from_id, String::new()));
+        heap.push(MinHeapEntry { cost: 0.0, room_id: from_id });
+
+        while let Some(MinHeapEntry { cost, room_id }) = heap.pop() {
+            if let Some(&(best, _, _)) = dist.get(&room_id) {
+                if cost > best { continue; }
+            }
+
+            let room = match self.rooms.get(&room_id) { Some(r) => r, None => continue };
+            for (dest_str, cmd) in &room.wayto {
+                let dest_id: u32 = match dest_str.parse() { Ok(v) => v, Err(_) => continue };
+                let edge_cost = match room.timeto.get(dest_str).copied().flatten() {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let new_cost = cost + edge_cost;
+                let better = dist.get(&dest_id).is_none_or(|&(c, _, _)| new_cost < c);
+                if better {
+                    dist.insert(dest_id, (new_cost, room_id, cmd.clone()));
+                    heap.push(MinHeapEntry { cost: new_cost, room_id: dest_id });
+
+                    // Check if destination has the tag
+                    if let Some(dest_room) = self.rooms.get(&dest_id) {
+                        if dest_room.tags.iter().any(|t| t.to_lowercase() == tag_lower) {
+                            // Reconstruct path
+                            let mut path = vec![];
+                            let mut cur = dest_id;
+                            loop {
+                                let (_, prev, ref c) = dist.get(&cur)?;
+                                if *prev == cur { break; }
+                                path.push(c.clone());
+                                cur = *prev;
+                            }
+                            path.reverse();
+                            return Some((dest_id, path));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Wrapper for BinaryHeap that implements min-heap ordering by cost.

@@ -273,6 +273,25 @@ function muckled()
     return dead() or stunned() or webbed()
 end
 
+-- Room helper functions (only if Room and Map globals are registered)
+if Room and Map then
+    function Room.current()
+        local id = Map.current_room()
+        if id then return Map.find_room(id) end
+        return nil
+    end
+
+    function Room.path_to(dest)
+        local from = Map.current_room()
+        if from then return Map.find_path(from, dest) end
+        return nil
+    end
+
+    function Room.find_nearest_by_tag(tag)
+        return Map.find_nearest_by_tag(tag)
+    end
+end
+
 -- Group 5: Room checks
 function checkarea(...)
     local args = {...}

@@ -230,6 +230,85 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
+    // Map.list() → table of all room IDs
+    let map_data = engine.map_data.clone();
+    t.set("list", lua.create_function(move |lua, ()| {
+        let guard = map_data.read().unwrap_or_else(|e| e.into_inner());
+        let data = match guard.as_ref() {
+            Some(d) => d,
+            None => return Ok(LuaValue::Table(lua.create_table()?)),
+        };
+        let t = lua.create_table()?;
+        for (i, id) in data.room_ids().iter().enumerate() {
+            t.raw_set(i + 1, *id as i64)?;
+        }
+        Ok(LuaValue::Table(t))
+    })?)?;
+
+    // Map.tags(tag) → table of room IDs that have the given tag (case-insensitive)
+    let map_data = engine.map_data.clone();
+    t.set("tags", lua.create_function(move |lua, tag: String| {
+        let guard = map_data.read().unwrap_or_else(|e| e.into_inner());
+        let data = match guard.as_ref() {
+            Some(d) => d,
+            None => return Ok(LuaValue::Table(lua.create_table()?)),
+        };
+        let tag_lower = tag.to_lowercase();
+        let t = lua.create_table()?;
+        let mut idx = 1;
+        for id in data.room_ids() {
+            if let Some(room) = data.get_room(id) {
+                if room.tags.iter().any(|t| t.to_lowercase() == tag_lower) {
+                    t.raw_set(idx, id as i64)?;
+                    idx += 1;
+                }
+            }
+        }
+        Ok(LuaValue::Table(t))
+    })?)?;
+
+    // Map.room_count() → number of rooms
+    let map_data = engine.map_data.clone();
+    t.set("room_count", lua.create_function(move |_, ()| {
+        let guard = map_data.read().unwrap_or_else(|e| e.into_inner());
+        let count = guard.as_ref().map(|d| d.room_count()).unwrap_or(0);
+        Ok(count as i64)
+    })?)?;
+
+    // Map.find_nearest_by_tag(tag) → {id=N, path={cmds}} or nil
+    let map_data = engine.map_data.clone();
+    let game_state = engine.game_state.clone();
+    t.set("find_nearest_by_tag", lua.create_function(move |lua, tag: String| {
+        let from_id = {
+            let guard = game_state.lock().unwrap();
+            guard.as_ref()
+                .and_then(|gs| gs.read().ok())
+                .and_then(|gs| gs.room_id)
+        };
+        let from_id = match from_id {
+            Some(id) => id,
+            None => return Ok(LuaValue::Nil),
+        };
+        let guard = map_data.read().unwrap_or_else(|e| e.into_inner());
+        let data = match guard.as_ref() {
+            Some(d) => d,
+            None => return Ok(LuaValue::Nil),
+        };
+        match data.find_nearest_by_tag(from_id, &tag) {
+            None => Ok(LuaValue::Nil),
+            Some((dest_id, path)) => {
+                let result = lua.create_table()?;
+                result.set("id", dest_id as i64)?;
+                let path_t = lua.create_table()?;
+                for (i, cmd) in path.iter().enumerate() {
+                    path_t.set(i + 1, cmd.as_str())?;
+                }
+                result.set("path", path_t)?;
+                Ok(LuaValue::Table(result))
+            }
+        }
+    })?)?;
+
     // Map.load(path) — reload map from a different JSON file at runtime
     let map_data = engine.map_data.clone();
     t.set("load", lua.create_function(move |_, path: String| {
