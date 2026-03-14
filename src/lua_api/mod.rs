@@ -11,6 +11,7 @@ pub mod map;
 pub mod primitives;
 pub mod script;
 pub mod settings;
+pub mod stats;
 pub mod version;
 
 use crate::script_engine::ScriptEngine;
@@ -29,6 +30,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     game_obj::register(engine).map_err(|e| anyhow::anyhow!("game_obj register: {e}"))?;
     script::register(engine)?;
     settings::register(engine)?;
+    stats::register(engine).map_err(|e| anyhow::anyhow!("stats register: {e}"))?;
     json::register(engine).map_err(|e| anyhow::anyhow!("json register: {e}"))?;
     version::register(engine).map_err(|e| anyhow::anyhow!("version register: {e}"))?;
     register_lua_builtins(engine)?;
