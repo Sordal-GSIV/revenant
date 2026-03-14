@@ -5,7 +5,7 @@ use mlua::prelude::*;
 use std::sync::{Arc, RwLock};
 
 /// Build a Lua table for a single spell definition + live state.
-fn build_spell_table(
+pub fn build_spell_table(
     lua: &Lua,
     spell: &SpellDef,
     gs: &Option<Arc<RwLock<GameState>>>,
@@ -231,13 +231,27 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         })?)?;
     }
 
-    // __index metamethod: Spell[101] or Spell["Spirit Warding I"]
+    // __index metamethod: Spell[101] or Spell["Spirit Warding I"] or Spell.after_stance
     {
         let sl4 = spell_list.clone();
         let gs4 = game_state.clone();
         let inf4 = infomon.clone();
+        let after_stance_read = engine.after_stance.clone();
         let mt = lua.create_table()?;
         mt.set("__index", lua.create_function(move |lua, (_t, key): (LuaTable, LuaValue)| {
+            // Handle after_stance before spell lookup
+            if let LuaValue::String(ref s) = key {
+                if let Ok(key_str) = s.to_str() {
+                if key_str == "after_stance" {
+                    let guard = after_stance_read.lock().unwrap();
+                    return match guard.as_ref() {
+                        Some(s) => Ok(LuaValue::String(lua.create_string(s)?)),
+                        None => Ok(LuaValue::Nil),
+                    };
+                }
+                }
+            }
+
             let sl_guard = sl4.read().unwrap();
             let sl = match &*sl_guard {
                 Some(sl) => sl,
@@ -267,6 +281,23 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 None => Ok(LuaValue::Nil),
             }
         })?)?;
+
+        // __newindex metamethod: Spell.after_stance = "guarded"
+        let after_stance_set = engine.after_stance.clone();
+        mt.set("__newindex", lua.create_function(move |_, (_t, key, val): (LuaTable, String, LuaValue)| {
+            match key.as_str() {
+                "after_stance" => {
+                    match val {
+                        LuaValue::Nil => { *after_stance_set.lock().unwrap() = None; }
+                        LuaValue::String(s) => { *after_stance_set.lock().unwrap() = Some(s.to_str()?.to_string()); }
+                        _ => {}
+                    }
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
+        })?)?;
+
         spell_table.set_metatable(Some(mt));
     }
 
