@@ -180,3 +180,365 @@ function waitforre(pattern, timeout)
         end
     end
 end
+
+-- Group 1: Threshold-checking vitals
+-- No arg returns value; with arg returns value >= n
+function checkmana(n)
+    if n == nil then return GameState.mana end
+    return GameState.mana >= n
+end
+function checkhealth(n)
+    if n == nil then return GameState.health end
+    return GameState.health >= n
+end
+function checkspirit(n)
+    if n == nil then return GameState.spirit end
+    return GameState.spirit >= n
+end
+function checkstamina(n)
+    if n == nil then return GameState.stamina end
+    return GameState.stamina >= n
+end
+
+-- Group 2: Percent vitals
+-- No arg returns percent; with arg returns percent >= n
+function percentmana(n)
+    local p = Char.percent_mana
+    if n == nil then return p end
+    return p >= n
+end
+function percenthealth(n)
+    local p = Char.percent_health
+    if n == nil then return p end
+    return p >= n
+end
+function percentspirit(n)
+    local p = Char.percent_spirit
+    if n == nil then return p end
+    return p >= n
+end
+function percentstamina(n)
+    local p = Char.percent_stamina
+    if n == nil then return p end
+    return p >= n
+end
+function percentconcentration(n)
+    local max = GameState.max_concentration
+    local p = max > 0 and math.floor(GameState.concentration * 100 / max) or 100
+    if n == nil then return p end
+    return p >= n
+end
+function percentstance(n)
+    local v = GameState.stance_value
+    if n == nil then return v end
+    return v ~= nil and v >= n
+end
+function percentencumbrance(n)
+    local v = GameState.encumbrance_value
+    if n == nil then return v end
+    return n <= v
+end
+
+-- Group 3: Mind-state checks
+function checkmind(s)
+    if s == nil then
+        return GameState.mind
+    elseif type(s) == "string" then
+        return string.lower(GameState.mind):find(string.lower(s)) ~= nil
+    elseif type(s) == "number" then
+        local thresholds = {12, 25, 37, 50, 62, 75, 90, 100}
+        local threshold = thresholds[math.floor(s)]
+        if threshold == nil then return false end
+        return GameState.mind_value >= threshold
+    end
+    return false
+end
+function percentmind(n)
+    local v = GameState.mind_value
+    if n == nil then return v end
+    return v >= n
+end
+function checkfried()
+    return GameState.mind_value >= 90
+end
+function checksaturated()
+    return GameState.mind_value >= 100
+end
+
+-- Group 4: Compound status checks
+function checkreallybleeding()
+    return bleeding() and not (Spell.active_p(9909) or Spell.active_p(9905))
+end
+function muckled()
+    return dead() or stunned() or webbed()
+end
+
+-- Group 5: Room checks
+function checkarea(...)
+    local args = {...}
+    local title = Room.title or ""
+    local area = title:match("^%[?([^,]+)") or title
+    area = area:gsub("^%[", "")
+    if #args == 0 then return area end
+    local area_lower = area:lower()
+    for _, pat in ipairs(args) do
+        if area_lower:find(pat:lower(), 1, true) then return true end
+    end
+    return false
+end
+function checkroom(...)
+    local args = {...}
+    local title = Room.title or ""
+    if #args == 0 then return title end
+    for _, pat in ipairs(args) do
+        if title:lower():find(pat:lower()) then return true end
+    end
+    return false
+end
+function checkroomdescrip(...)
+    local args = {...}
+    local desc = Room.description or ""
+    if #args == 0 then return desc end
+    for _, pat in ipairs(args) do
+        if desc:lower():find(pat:lower()) then return true end
+    end
+    return false
+end
+function outside()
+    local s = GameState.room_exits_string or ""
+    return string.find(s, "Obvious paths:") ~= nil
+end
+
+-- Group 6: GameObj convenience checks
+function checknpcs(...)
+    local args = {...}
+    local npcs = GameObj.npcs()
+    if #npcs == 0 then
+        if #args == 0 then return nil else return false end
+    end
+    local nouns = {}
+    for _, npc in ipairs(npcs) do nouns[#nouns + 1] = npc.noun end
+    if #args == 0 then return nouns end
+    for _, pat in ipairs(args) do
+        for _, noun in ipairs(nouns) do
+            if noun:lower():find(pat:lower()) then return noun end
+        end
+    end
+    return false
+end
+function checkpcs(...)
+    local args = {...}
+    local pcs = GameObj.pcs()
+    if #pcs == 0 then
+        if #args == 0 then return nil else return false end
+    end
+    local nouns = {}
+    for _, pc in ipairs(pcs) do nouns[#nouns + 1] = pc.noun end
+    if #args == 0 then return nouns end
+    for _, pat in ipairs(args) do
+        for _, noun in ipairs(nouns) do
+            if noun:lower():find(pat:lower()) then return noun end
+        end
+    end
+    return false
+end
+function checkloot()
+    local loot = GameObj.loot()
+    local nouns = {}
+    for _, item in ipairs(loot) do nouns[#nouns + 1] = item.noun end
+    return nouns
+end
+function checkright(...)
+    local rh = GameObj.right_hand()
+    if rh == nil then return nil end
+    if rh.name == "Empty" or rh.name == "" then return nil end
+    local args = {...}
+    if #args == 0 then return rh.noun end
+    for _, pat in ipairs(args) do
+        if rh.name:lower():find(pat:lower()) then return pat end
+    end
+    return nil
+end
+function checkleft(...)
+    local lh = GameObj.left_hand()
+    if lh == nil then return nil end
+    if lh.name == "Empty" or lh.name == "" then return nil end
+    local args = {...}
+    if #args == 0 then return lh.noun end
+    for _, pat in ipairs(args) do
+        if lh.name:lower():find(pat:lower()) then return pat end
+    end
+    return nil
+end
+function righthand_p()
+    local rh = GameObj.right_hand()
+    return rh ~= nil and rh.name ~= "Empty" and rh.name ~= ""
+end
+function lefthand_p()
+    local lh = GameObj.left_hand()
+    return lh ~= nil and lh.name ~= "Empty" and lh.name ~= ""
+end
+
+-- Group 7: Stance and encumbrance checks
+function checkstance(val)
+    if val == nil then return GameState.stance end
+    if type(val) == "string" then
+        local s = val:lower()
+        if s:find("off") then return GameState.stance_value == 100
+        elseif s:find("adv") then return GameState.stance_value ~= nil and GameState.stance_value >= 61 and GameState.stance_value <= 80
+        elseif s:find("for") then return GameState.stance_value ~= nil and GameState.stance_value >= 41 and GameState.stance_value <= 60
+        elseif s:find("neu") then return GameState.stance_value ~= nil and GameState.stance_value >= 21 and GameState.stance_value <= 40
+        elseif s:find("gua") then return GameState.stance_value ~= nil and GameState.stance_value >= 1 and GameState.stance_value <= 20
+        elseif s:find("def") then return GameState.stance_value == 0
+        end
+        return nil
+    elseif type(val) == "number" then
+        return GameState.stance_value == val
+    end
+    return nil
+end
+function checkencumbrance(val)
+    if val == nil then return GameState.encumbrance end
+    if type(val) == "number" then
+        return val <= GameState.encumbrance_value
+    elseif type(val) == "string" then
+        return GameState.encumbrance:lower():find(val:lower()) ~= nil
+    end
+    return false
+end
+
+-- Group 8: Miscellaneous checks
+function checkbounty()
+    local task = Bounty.task
+    if task == "" then return nil end
+    return task
+end
+function checkspell(...)
+    local nums = {...}
+    if #nums == 0 then return false end
+    for _, num in ipairs(nums) do
+        if not Spell.active_p(num) then return false end
+    end
+    return true
+end
+function checkprep(spell)
+    if spell == nil then return GameState.prepared_spell end
+    local prep = GameState.prepared_spell
+    if prep == nil then return false end
+    return prep:lower():find(spell:lower()) ~= nil
+end
+function checkname(...)
+    local args = {...}
+    if #args == 0 then return GameState.name end
+    for _, pat in ipairs(args) do
+        if GameState.name:lower():find(pat:lower()) then return true end
+    end
+    return false
+end
+
+-- Group 9: Familiar checks
+function checkfamroom(...)
+    local args = {...}
+    local title = Familiar.room_title or ""
+    if #args == 0 then return title end
+    for _, pat in ipairs(args) do
+        if title:lower():find(pat:lower()) then return true end
+    end
+    return false
+end
+function checkfamarea(...)
+    local args = {...}
+    local title = Familiar.room_title or ""
+    local area = title:match("^%[?([^,]+)") or title
+    area = area:gsub("^%[", "")
+    if #args == 0 then return area end
+    for _, pat in ipairs(args) do
+        if area:lower():find(pat:lower(), 1, true) then return true end
+    end
+    return false
+end
+function checkfampaths(dir)
+    local exits = Familiar.room_exits
+    if type(exits) ~= "table" then return false end
+    if dir == nil or dir == "none" then
+        if #exits == 0 then return false end
+        return exits
+    end
+    for _, e in ipairs(exits) do
+        if e == dir then return true end
+    end
+    return false
+end
+function checkfamnpcs(...)
+    local args = {...}
+    local npcs = GameObj.fam_npcs()
+    local nouns = {}
+    for _, npc in ipairs(npcs) do nouns[#nouns + 1] = npc.noun end
+    if #nouns == 0 then return false end
+    if #args == 0 then return nouns end
+    for _, pat in ipairs(args) do
+        for _, noun in ipairs(nouns) do
+            if noun:lower():find(pat:lower()) then return noun end
+        end
+    end
+    return false
+end
+function checkfampcs(...)
+    local args = {...}
+    local pcs = GameObj.fam_pcs()
+    local nouns = {}
+    for _, pc in ipairs(pcs) do nouns[#nouns + 1] = pc.noun end
+    if #nouns == 0 then return false end
+    if #args == 0 then return nouns end
+    for _, pat in ipairs(args) do
+        for _, noun in ipairs(nouns) do
+            if noun:lower():find(pat:lower()) then return noun end
+        end
+    end
+    return false
+end
+function checkfamroomdescrip(...)
+    local args = {...}
+    local desc = Familiar.room_description or ""
+    if #args == 0 then return desc end
+    for _, pat in ipairs(args) do
+        if desc:lower():find(pat:lower()) then return true end
+    end
+    return false
+end
+
+-- Group 10: Movement and command patterns
+function multimove(...)
+    local dirs = {...}
+    for _, dir in ipairs(dirs) do
+        move(dir)
+    end
+end
+
+function selectput(cmd, success, failure, timeout)
+    if type(success) == "string" then success = {success} end
+    if type(failure) == "string" then failure = {failure} end
+    local start_time = os.time()
+    while true do
+        if timeout and (os.time() - start_time) >= timeout then return nil end
+        fput(cmd)
+        while true do
+            local remaining = timeout and (timeout - (os.time() - start_time)) or nil
+            if remaining and remaining <= 0 then return nil end
+            local line = get_noblock()
+            if not line then
+                pause(0.1)
+            else
+                for _, pat in ipairs(success) do
+                    if string.find(line, pat) then return line end
+                end
+                for _, pat in ipairs(failure) do
+                    if string.find(line, pat) then break end
+                end
+                if string.find(line, "^>$") or string.find(line, "<prompt") then
+                    break
+                end
+            end
+        end
+    end
+end
