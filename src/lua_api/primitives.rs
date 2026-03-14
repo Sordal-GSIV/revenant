@@ -267,6 +267,16 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(table)
     })?)?;
 
+    // send_to_script(name, msg) — inject a line into another script's line buffer
+    let script_lines_tx = engine.script_lines_tx.clone();
+    globals.set("send_to_script", lua.create_function(move |_, (name, msg): (String, String)| {
+        let map = script_lines_tx.lock().unwrap();
+        if let Some(tx) = map.get(&name) {
+            let _ = tx.send(msg); // silently drop if target script exited
+        }
+        Ok(())
+    })?)?;
+
     // _raw_fput(cmd) — put + wait for <prompt> from downstream (low-level; use fput() from Lua)
     let sink = engine.upstream_sink.clone();
     let dtx = engine.downstream_tx.clone();

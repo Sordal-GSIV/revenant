@@ -644,3 +644,66 @@ async fn test_die_with_me_kills_target_on_exit() {
     let errs = errors.lock().unwrap();
     assert!(errs.is_empty(), "errors: {:?}", *errs);
 }
+
+#[tokio::test]
+async fn test_send_to_script_injects_line() {
+    let engine = ScriptEngine::new();
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    // Receiver script: waits for a message via get()
+    let tmp_recv = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp_recv.path(), r#"
+        local line = get()
+        assert(line == "hello from sender", "expected message, got: " .. tostring(line))
+    "#).unwrap();
+
+    // Sender script: sends message to receiver
+    let tmp_send = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp_send.path(), r#"
+        pause(0.05)
+        send_to_script("receiver", "hello from sender")
+    "#).unwrap();
+
+    engine.start_script("receiver", tmp_recv.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    engine.start_script("sender", tmp_send.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "script errors: {:?}", *errs);
+    assert!(!engine.is_running("receiver"), "receiver should have finished");
+}
+
+#[tokio::test]
+async fn test_convenience_aliases() {
+    use revenant::game_state::GameState;
+    let gs = Arc::new(std::sync::RwLock::new(GameState::default()));
+    {
+        let mut state = gs.write().unwrap();
+        state.health = 100;
+        state.max_health = 200;
+        state.mana = 50;
+        state.stunned = true;
+        state.room_name = "Town Square".to_string();
+    }
+
+    let engine = ScriptEngine::new();
+    engine.set_game_state(gs);
+    engine.install_lua_api().unwrap();
+
+    engine.eval_lua(r#"
+        assert(health() == 100, "health() failed")
+        assert(max_health() == 200, "max_health() failed")
+        assert(mana() == 50, "mana() failed")
+        assert(stunned() == true, "stunned() failed")
+        assert(room_name() == "Town Square", "room_name() failed")
+    "#).await.unwrap();
+}
