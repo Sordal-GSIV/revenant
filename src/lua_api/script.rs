@@ -300,6 +300,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(())
     })?)?;
 
+    // running(name) — global alias for Script.running(name)
+    let running_alias = engine.running.clone();
+    globals.set("running", lua.create_function(move |_, name: String| {
+        Ok(running_alias.lock().unwrap()
+            .get(&name)
+            .map(|h| !h.is_finished())
+            .unwrap_or(false))
+    })?)?;
+
     // Build a metatable for the Script table so that Script.vars and Script.name
     // are computed properties (not stored values). The __index metamethod intercepts
     // field access and returns the current value from the per-thread identity map.

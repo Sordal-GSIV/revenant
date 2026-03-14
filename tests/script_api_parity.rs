@@ -609,3 +609,38 @@ async fn test_no_kill_all_protects_script() {
     engine.kill_script("protected").await;
 }
 
+#[tokio::test]
+async fn test_die_with_me_kills_target_on_exit() {
+    use tempfile::TempDir;
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("parent.lua"), r#"
+        die_with_me("child")
+        -- parent exits immediately
+    "#.as_bytes()).unwrap();
+    std::fs::write(tmp.path().join("child.lua"), b"pause(9999)").unwrap();
+
+    let engine = ScriptEngine::new();
+    engine.set_scripts_dir(tmp.path().to_str().unwrap());
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    // Start child first, then parent
+    engine.eval_lua(r#"Script.run("child")"#).await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    assert!(engine.is_running("child"));
+
+    engine.eval_lua(r#"Script.run("parent")"#).await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // Parent exited, child should be killed via die_with_me
+    assert!(!engine.is_running("parent"));
+    assert!(!engine.is_running("child"), "child should have been killed when parent exited");
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "errors: {:?}", *errs);
+}

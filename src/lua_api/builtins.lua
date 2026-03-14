@@ -153,6 +153,12 @@ function multifput(...)
     end
 end
 
+function die_with_me(target)
+    before_dying(function()
+        Script.kill(target)
+    end)
+end
+
 function waitforre(pattern, timeout)
     local deadline = timeout and (os.time() + timeout) or nil
     while true do
