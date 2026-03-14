@@ -291,3 +291,51 @@ fn test_body_injuries_get_unknown_returns_none() {
     assert_eq!(injuries.get("tail"), None);
     assert_eq!(injuries.get(""), None);
 }
+
+#[test]
+fn test_apply_injury_wound() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Injury { body_part: "head".into(), wound: 3, scar: 0 });
+    assert_eq!(gs.wounds.head, 3);
+    assert_eq!(gs.scars.head, 0);
+}
+
+#[test]
+fn test_apply_injury_scar() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Injury { body_part: "chest".into(), wound: 0, scar: 2 });
+    assert_eq!(gs.wounds.chest, 0);
+    assert_eq!(gs.scars.chest, 2);
+}
+
+#[test]
+fn test_apply_injury_clears_on_empty() {
+    let mut gs = GameState::default();
+    // First set a wound
+    gs.apply(XmlEvent::Injury { body_part: "leftArm".into(), wound: 2, scar: 0 });
+    assert_eq!(gs.wounds.left_arm, 2);
+    // Then clear it
+    gs.apply(XmlEvent::Injury { body_part: "leftArm".into(), wound: 0, scar: 0 });
+    assert_eq!(gs.wounds.left_arm, 0);
+    assert_eq!(gs.scars.left_arm, 0);
+}
+
+#[test]
+fn test_apply_injury_nsys() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Injury { body_part: "nsys".into(), wound: 2, scar: 0 });
+    assert_eq!(gs.wounds.nsys, 2);
+    assert_eq!(gs.scars.nsys, 0);
+}
+
+#[test]
+fn test_apply_injury_wound_replaces_scar() {
+    let mut gs = GameState::default();
+    // Set a scar first
+    gs.apply(XmlEvent::Injury { body_part: "head".into(), wound: 0, scar: 1 });
+    assert_eq!(gs.scars.head, 1);
+    // Wound replaces scar for that part (scar=0 in the event)
+    gs.apply(XmlEvent::Injury { body_part: "head".into(), wound: 3, scar: 0 });
+    assert_eq!(gs.wounds.head, 3);
+    assert_eq!(gs.scars.head, 0);
+}

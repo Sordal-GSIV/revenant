@@ -336,6 +336,12 @@ impl GameState {
                     duration_secs: duration,
                 });
             }
+            XmlEvent::Injury { body_part, wound, scar } => {
+                if !self.wounds.set(&body_part, wound) {
+                    tracing::warn!("Unknown injury body part: {body_part}");
+                }
+                self.scars.set(&body_part, scar);
+            }
             _ => {}
         }
     }
