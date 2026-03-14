@@ -30,6 +30,16 @@ fn register_hook_table(
         Ok(())
     })?)?;
 
+    let c = chain.clone();
+    t.set("list", lua.create_function(move |lua, ()| {
+        let names = c.lock().unwrap().hook_names();
+        let t = lua.create_table()?;
+        for (i, name) in names.iter().enumerate() {
+            t.raw_set(i + 1, name.as_str())?;
+        }
+        Ok(t)
+    })?)?;
+
     lua.globals().set(global, t)?;
     Ok(())
 }
