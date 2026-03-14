@@ -68,8 +68,10 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     {
         let sl = spell_list.clone();
         let gs = game_state.clone();
+        let inf = infomon.clone();
         spell_table.set("active", lua.create_function(move |lua, ()| {
             let gs_opt = gs.lock().unwrap().clone();
+            let inf_guard = inf.lock().unwrap();
             let active_entries: Vec<(String, Option<u32>, std::time::Instant)> = match &gs_opt {
                 Some(gs_arc) => {
                     let state = gs_arc.read().unwrap();
@@ -79,30 +81,45 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 }
                 None => Vec::new(),
             };
+            let level = match &gs_opt {
+                Some(gs_arc) => gs_arc.read().unwrap().level,
+                None => 0,
+            };
 
             let result = lua.create_table()?;
             let sl_guard = sl.read().unwrap();
 
             for (i, (name, duration, activated_at)) in active_entries.iter().enumerate() {
-                let t = lua.create_table()?;
-                t.set("name", name.as_str())?;
                 let secs_left = match duration {
                     Some(dur) => (*dur as f64 - activated_at.elapsed().as_secs_f64()).max(0.0),
                     None => 0.0,
                 };
-                t.set("timeleft", secs_left / 60.0)?;
-                t.set("secsleft", secs_left)?;
-                t.set("active", true)?;
 
-                // Enrich with spell definition data if available
-                if let Some(ref sl) = *sl_guard {
+                // Use build_spell_table when a matching SpellDef exists, then override live timing fields
+                let t = if let Some(ref sl) = *sl_guard {
                     if let Some(spell) = sl.get_by_name(name) {
-                        t.set("num", spell.num as i64)?;
-                        t.set("type", spell.spell_type.as_str())?;
-                        t.set("circle", spell.circle.as_str())?;
-                        t.set("circle_name", spell_data::circle_name(spell_data::spell_circle(spell.num)))?;
+                        let t = build_spell_table(lua, spell, &gs_opt, inf_guard.as_ref(), level)?;
+                        // Override with live timing values computed from activated_at
+                        t.set("timeleft", secs_left / 60.0)?;
+                        t.set("secsleft", secs_left)?;
+                        t.set("active", true)?;
+                        t
+                    } else {
+                        let t = lua.create_table()?;
+                        t.set("name", name.as_str())?;
+                        t.set("timeleft", secs_left / 60.0)?;
+                        t.set("secsleft", secs_left)?;
+                        t.set("active", true)?;
+                        t
                     }
-                }
+                } else {
+                    let t = lua.create_table()?;
+                    t.set("name", name.as_str())?;
+                    t.set("timeleft", secs_left / 60.0)?;
+                    t.set("secsleft", secs_left)?;
+                    t.set("active", true)?;
+                    t
+                };
                 result.raw_set(i + 1, t)?;
             }
             Ok(result)
@@ -139,8 +156,8 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         let gs3 = game_state.clone();
         spell_table.set("known_p", lua.create_function(move |_, num: i64| {
             let sl_guard = sl3.read().unwrap();
-            let inf_guard = inf3.lock().unwrap();
-            let gs_opt = gs3.lock().unwrap().clone();
+            let gs_opt = gs3.lock().unwrap().clone();  // game_state first
+            let inf_guard = inf3.lock().unwrap();       // then infomon
             let level = match &gs_opt {
                 Some(gs_arc) => gs_arc.read().unwrap().level,
                 None => 0,
