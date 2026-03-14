@@ -56,6 +56,37 @@ pub enum XmlEvent {
         wound: u8,
         scar: u8,
     },
+    /// A named stream was pushed onto the stream stack.
+    PushStream { id: String },
+    /// A named stream was popped from the stream stack.
+    PopStream { id: String },
+    /// A named stream was cleared (content reset).
+    ClearStream { id: String },
+    /// Text emitted inside a named stream (bounty, society, etc.).
+    StreamText { stream_id: String, text: String },
+    /// Room name inside the familiar's stream.
+    FamiliarRoomName { name: String },
+    /// Room description text inside the familiar's stream.
+    FamiliarRoomDescription { text: String },
+    /// Exits accumulated from the familiar stream compass/exit links.
+    FamiliarRoomExits { exits: Vec<String> },
+    /// A game object seen by the familiar (NPC, loot, PC, or room-desc object).
+    FamiliarObjCreate {
+        id: String,
+        noun: String,
+        name: String,
+        category: ObjCategory,
+    },
+}
+
+/// Familiar stream section — determines how `<a>` link objects are categorized.
+#[derive(Debug, Clone, PartialEq, Default)]
+enum FamMode {
+    #[default]
+    None,
+    Things,  // "You also see..." — loot and NPCs
+    People,  // "Also here:" — PCs
+    Paths,   // "Obvious paths/exits:" — exits
 }
 
 /// Streaming GemStone XML parser.
@@ -76,6 +107,12 @@ pub struct StreamParser {
     in_bold: bool,
     /// Container ID set by `<inv id="...">` tag; scopes subsequent `<a>` objects.
     current_inv_container: Option<String>,
+    /// Which named stream (`<pushStream id="...">`) is currently active, if any.
+    current_stream: Option<String>,
+    /// State machine tracking which section of the familiar stream we are in.
+    fam_mode: FamMode,
+    /// Exit links accumulated while in `FamMode::Paths`; flushed on `popStream`.
+    fam_exits: Vec<String>,
 }
 
 impl StreamParser {
@@ -86,6 +123,9 @@ impl StreamParser {
             current_component: None,
             in_bold: false,
             current_inv_container: None,
+            current_stream: None,
+            fam_mode: FamMode::None,
+            fam_exits: Vec::new(),
         }
     }
 
@@ -103,7 +143,7 @@ impl StreamParser {
                 None => {
                     // No tag start — all plain text
                     let text = std::mem::take(&mut self.buf);
-                    emit_text(&mut events, &text, &self.current_style);
+                    self.emit_text(&mut events, &text);
                     break;
                 }
                 Some(0) => {
@@ -126,7 +166,7 @@ impl StreamParser {
                 Some(lt) => {
                     // Plain text before the next tag
                     let text: String = self.buf.drain(..lt).collect();
-                    emit_text(&mut events, &text, &self.current_style);
+                    self.emit_text(&mut events, &text);
                     // Loop: buffer now starts at '<'
                 }
             }
@@ -190,6 +230,26 @@ impl StreamParser {
                     }
                     XmlEvent::Mana { value, max } => {
                         tracing::info!("mana={value}/{max:?}");
+                        events.push(ev);
+                    }
+                    XmlEvent::PushStream { ref id } => {
+                        if id == "familiar" {
+                            self.fam_mode = FamMode::None;
+                            self.fam_exits.clear();
+                        }
+                        self.current_stream = Some(id.clone());
+                        events.push(ev);
+                    }
+                    XmlEvent::PopStream { ref id } => {
+                        if id == "familiar" && !self.fam_exits.is_empty() {
+                            let exits = std::mem::take(&mut self.fam_exits);
+                            events.push(XmlEvent::FamiliarRoomExits { exits });
+                            self.fam_mode = FamMode::None;
+                        }
+                        events.push(ev);
+                        self.current_stream = None;
+                    }
+                    XmlEvent::ClearStream { .. } => {
                         events.push(ev);
                     }
                     _ => events.push(ev),
@@ -260,6 +320,9 @@ impl StreamParser {
                 "b" => {
                     self.in_bold = true;
                 }
+                "compass" if self.current_stream.as_deref() == Some("familiar") => {
+                    self.fam_mode = FamMode::None;
+                }
                 "inv" => {
                     // <inv id="container_id"> scopes subsequent inventory items
                     let xml = format!("<{}/>", inner);
@@ -282,6 +345,23 @@ impl StreamParser {
                             let id = attr(&attrs, "exist").unwrap_or_default();
                             let noun = attr(&attrs, "noun").unwrap_or_default();
                             if id.is_empty() { return; }
+                            if self.current_stream.as_deref() == Some("familiar") {
+                                let content_is_bold = raw_content.contains("<b>") || self.in_bold;
+                                let category = match self.fam_mode {
+                                    FamMode::Things if content_is_bold => ObjCategory::Npc,
+                                    FamMode::Things => ObjCategory::Loot,
+                                    FamMode::People => ObjCategory::Pc,
+                                    FamMode::None => ObjCategory::RoomDesc,
+                                    FamMode::Paths => {
+                                        self.fam_exits.push(name);
+                                        return;
+                                    }
+                                };
+                                events.push(XmlEvent::FamiliarObjCreate {
+                                    id, noun, name, category,
+                                });
+                                return;
+                            }
                             let category = match self.current_component.as_deref() {
                                 Some("room objs") if self.in_bold => ObjCategory::Npc,
                                 Some("room objs") => ObjCategory::Loot,
@@ -411,12 +491,49 @@ fn collect_attrs(e: &quick_xml::events::BytesStart<'_>) -> Attrs {
         .collect()
 }
 
-fn emit_text(events: &mut Vec<XmlEvent>, s: &str, style: &Option<String>) {
-    if s.is_empty() { return; }
-    match style.as_deref() {
-        Some("roomName") => events.push(XmlEvent::RoomName { name: s.to_string() }),
-        Some("roomDesc") => events.push(XmlEvent::RoomDescription { text: s.to_string() }),
-        _ => events.push(XmlEvent::Text { content: s.to_string() }),
+impl StreamParser {
+    fn emit_text(&mut self, events: &mut Vec<XmlEvent>, s: &str) {
+        if s.is_empty() { return; }
+        match self.current_stream.as_deref() {
+            Some("familiar") => {
+                match self.current_style.as_deref() {
+                    Some("roomName") => {
+                        self.fam_mode = FamMode::None;
+                        self.fam_exits.clear();
+                        events.push(XmlEvent::FamiliarRoomName { name: s.to_string() });
+                    }
+                    Some("roomDesc") => {
+                        events.push(XmlEvent::FamiliarRoomDescription { text: s.to_string() });
+                    }
+                    _ => {
+                        if s.starts_with("You also see") {
+                            self.fam_mode = FamMode::Things;
+                        } else if s.starts_with("Also here") {
+                            self.fam_mode = FamMode::People;
+                        } else if s.contains("Obvious paths") || s.contains("Obvious exits") {
+                            self.fam_mode = FamMode::Paths;
+                        }
+                        events.push(XmlEvent::StreamText {
+                            stream_id: "familiar".into(),
+                            text: s.to_string(),
+                        });
+                    }
+                }
+            }
+            Some(stream_id) => {
+                events.push(XmlEvent::StreamText {
+                    stream_id: stream_id.to_string(),
+                    text: s.to_string(),
+                });
+            }
+            None => {
+                match self.current_style.as_deref() {
+                    Some("roomName") => events.push(XmlEvent::RoomName { name: s.to_string() }),
+                    Some("roomDesc") => events.push(XmlEvent::RoomDescription { text: s.to_string() }),
+                    _ => events.push(XmlEvent::Text { content: s.to_string() }),
+                }
+            }
+        }
     }
 }
 
@@ -516,6 +633,18 @@ fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
                 Some(XmlEvent::StylePush { id })
             }
         }
+        "pushStream" => {
+            let id = attr(attrs, "id").unwrap_or_default();
+            Some(XmlEvent::PushStream { id })
+        }
+        "popStream" => {
+            let id = attr(attrs, "id").unwrap_or_default();
+            Some(XmlEvent::PopStream { id })
+        }
+        "clearStream" => {
+            let id = attr(attrs, "id").unwrap_or_default();
+            Some(XmlEvent::ClearStream { id })
+        }
         _ => None,
     }
 }
@@ -581,5 +710,114 @@ fn parse_injury_name(name: &str) -> (u8, u8) {
     } else {
         tracing::warn!("parse_injury_name: unrecognized injury name prefix: {name:?}");
         (0, 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_push_pop_stream_bounty() {
+        let events = parse_chunk(
+            r#"<pushStream id="bounty"/>You have a task<popStream id="bounty"/>"#
+        );
+        assert!(matches!(&events[0], XmlEvent::PushStream { id } if id == "bounty"));
+        assert!(matches!(&events[1], XmlEvent::StreamText { stream_id, text }
+            if stream_id == "bounty" && text == "You have a task"));
+        assert!(matches!(&events[2], XmlEvent::PopStream { id } if id == "bounty"));
+    }
+
+    #[test]
+    fn test_clear_stream() {
+        let events = parse_chunk(r#"<clearStream id="bounty"/>"#);
+        assert!(matches!(&events[0], XmlEvent::ClearStream { id } if id == "bounty"));
+    }
+
+    #[test]
+    fn test_stream_text_not_room_name() {
+        let mut parser = StreamParser::new();
+        let events = parser.feed(
+            r#"<pushStream id="familiar"/><style id="roomName"/>Some Room<style id=""/><popStream id="familiar"/>"#
+        );
+        assert!(!events.iter().any(|e| matches!(e, XmlEvent::RoomName { .. })));
+        assert!(events.iter().any(|e| matches!(e, XmlEvent::FamiliarRoomName { .. })));
+    }
+
+    #[test]
+    fn test_split_push_stream_across_feeds() {
+        let mut parser = StreamParser::new();
+        let e1 = parser.feed(r#"<pushStream id="bou"#);
+        assert!(e1.is_empty());
+        let e2 = parser.feed(r#"nty"/>task text<popStream id="bounty"/>"#);
+        assert!(matches!(&e2[0], XmlEvent::PushStream { id } if id == "bounty"));
+        assert!(matches!(&e2[1], XmlEvent::StreamText { stream_id, .. } if stream_id == "bounty"));
+    }
+
+    #[test]
+    fn test_familiar_stream_room_name() {
+        let events = parse_chunk(
+            r#"<pushStream id="familiar"/><style id="roomName"/>[Icemule Trace]<style id=""/><popStream id="familiar"/>"#
+        );
+        assert!(events.iter().any(|e| matches!(e, XmlEvent::FamiliarRoomName { name } if name == "[Icemule Trace]")));
+        assert!(!events.iter().any(|e| matches!(e, XmlEvent::RoomName { .. })));
+    }
+
+    #[test]
+    fn test_familiar_stream_npc_loot() {
+        let mut parser = StreamParser::new();
+        let events = parser.feed(concat!(
+            r#"<pushStream id="familiar"/>"#,
+            "You also see ",
+            r#"<a exist="123" noun="kobold"><b>a kobold</b></a>"#,
+            " and ",
+            r#"<a exist="456" noun="chest">a wooden chest</a>"#,
+            r#"<popStream id="familiar"/>"#
+        ));
+        let fam_objs: Vec<_> = events.iter()
+            .filter(|e| matches!(e, XmlEvent::FamiliarObjCreate { .. }))
+            .collect();
+        assert_eq!(fam_objs.len(), 2);
+        assert!(matches!(&fam_objs[0], XmlEvent::FamiliarObjCreate { category: ObjCategory::Npc, .. }));
+        assert!(matches!(&fam_objs[1], XmlEvent::FamiliarObjCreate { category: ObjCategory::Loot, .. }));
+    }
+
+    #[test]
+    fn test_familiar_stream_pcs() {
+        let mut parser = StreamParser::new();
+        let events = parser.feed(concat!(
+            r#"<pushStream id="familiar"/>"#,
+            "Also here: ",
+            r#"<a exist="789" noun="Gandalf">Gandalf</a>"#,
+            r#"<popStream id="familiar"/>"#
+        ));
+        assert!(events.iter().any(|e| matches!(e,
+            XmlEvent::FamiliarObjCreate { category: ObjCategory::Pc, noun, .. } if noun == "Gandalf"
+        )));
+    }
+
+    #[test]
+    fn test_familiar_room_desc_objects() {
+        let mut parser = StreamParser::new();
+        let events = parser.feed(concat!(
+            r#"<pushStream id="familiar"/>"#,
+            r#"<style id="roomDesc"/>The trail is narrow. "#,
+            r#"<a exist="111" noun="sign">a wooden sign</a>"#,
+            r#"<style id=""/>"#,
+            r#"<popStream id="familiar"/>"#
+        ));
+        assert!(events.iter().any(|e| matches!(e,
+            XmlEvent::FamiliarObjCreate { category: ObjCategory::RoomDesc, .. }
+        )));
+    }
+
+    #[test]
+    fn test_normal_parsing_unaffected_by_stream_code() {
+        let mut parser = StreamParser::new();
+        let events = parser.feed(
+            r#"<style id="roomName"/>Town Square<style id=""/>"#
+        );
+        assert!(events.iter().any(|e| matches!(e, XmlEvent::RoomName { name } if name == "Town Square")));
+        assert!(!events.iter().any(|e| matches!(e, XmlEvent::FamiliarRoomName { .. })));
     }
 }
