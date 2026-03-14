@@ -619,10 +619,105 @@ fn register_wait(_lua: &mlua::Lua, _gui: &LuaTable, _cbs: Arc<Mutex<GuiCallbacks
 // ── gui_event_loop (Task 4) ───────────────────────────────────────────────────
 async fn gui_event_loop(
     mut event_rx: tokio::sync::mpsc::UnboundedReceiver<GuiEvent>,
-    _gs: Arc<Mutex<GuiState>>,
-    _cbs: Arc<Mutex<GuiCallbacks>>,
-    _lua: Arc<mlua::Lua>,
+    gs: Arc<Mutex<GuiState>>,
+    cbs: Arc<Mutex<GuiCallbacks>>,
+    lua: Arc<mlua::Lua>,
 ) {
-    // Populated in Task 4; for now just drain the channel.
-    while let Some(_event) = event_rx.recv().await {}
+    while let Some(event) = event_rx.recv().await {
+        let win_id = event.window_id();
+
+        // ── WindowClosed: drain all waiters for this window ───────────────
+        if let GuiEvent::WindowClosed { window_id } = &event {
+            // Collect all widget IDs belonging to this window
+            let widget_ids: Vec<WidgetId> = gs.lock().unwrap()
+                .widget_window.iter()
+                .filter(|(_, wid)| **wid == *window_id)
+                .map(|(id, _)| *id)
+                .collect();
+
+            {
+                let mut c = cbs.lock().unwrap();
+                // Drain widget-scoped waiters
+                for wid in &widget_ids {
+                    for et in [WaitEventType::Click, WaitEventType::Change, WaitEventType::Submit] {
+                        let key = WaitKey::Widget { widget_id: *wid, event_type: et };
+                        if let Some(tx) = c.waiters.remove(&key) { tx.send(None).ok(); }
+                    }
+                }
+                // Drain window-scoped waiters
+                if let Some(tx) = c.waiters.remove(&WaitKey::WindowClick { window_id: *window_id }) {
+                    tx.send(None).ok();
+                }
+                if let Some(tx) = c.waiters.remove(&WaitKey::WindowClose { window_id: *window_id }) {
+                    tx.send(None).ok();
+                }
+            }
+
+            // Fire on_close callback
+            let cb = cbs.lock().unwrap().window_callbacks.get(window_id).cloned();
+            if let Some(cb) = cb {
+                let _ = cb.call_async::<()>(LuaValue::Nil).await;
+            }
+            continue;
+        }
+
+        // ── ButtonClicked: check widget waiter, then window-click waiter ──
+        if let GuiEvent::ButtonClicked { window_id, widget_id } = &event {
+            let wkey = WaitKey::Widget { widget_id: *widget_id, event_type: WaitEventType::Click };
+            if let Some(tx) = cbs.lock().unwrap().waiters.remove(&wkey) {
+                tx.send(Some(LuaValue::Integer(*widget_id as i64))).ok();
+                continue;
+            }
+            let wkey = WaitKey::WindowClick { window_id: *window_id };
+            if let Some(tx) = cbs.lock().unwrap().waiters.remove(&wkey) {
+                tx.send(Some(LuaValue::Integer(*widget_id as i64))).ok();
+                continue;
+            }
+        }
+
+        // ── All other widget events: check widget waiter ──────────────────
+        if let Some(widget_id) = event.widget_id() {
+            if let Some(et) = event.wait_event_type() {
+                let wkey = WaitKey::Widget { widget_id, event_type: et };
+                if let Some(tx) = cbs.lock().unwrap().waiters.remove(&wkey) {
+                    let lua_val = match &event {
+                        GuiEvent::CheckboxChanged { value, .. } => LuaValue::Boolean(*value),
+                        GuiEvent::InputChanged    { text, .. }  |
+                        GuiEvent::InputSubmitted  { text, .. }  => lua.create_string(text.as_str())
+                            .map(LuaValue::String)
+                            .unwrap_or(LuaValue::Nil),
+                        GuiEvent::MapClicked { room_id, .. } => LuaValue::Integer(*room_id as i64),
+                        _ => LuaValue::Nil,
+                    };
+                    tx.send(Some(lua_val)).ok();
+                    continue;
+                }
+            }
+        }
+
+        // ── No waiter matched — fire widget callback ──────────────────────
+        if let Some(widget_id) = event.widget_id() {
+            let cb = match &event {
+                GuiEvent::InputSubmitted { .. } => {
+                    cbs.lock().unwrap().submit_callbacks.get(&widget_id).cloned()
+                }
+                _ => {
+                    cbs.lock().unwrap().widget_callbacks.get(&widget_id).cloned()
+                }
+            };
+            if let Some(cb) = cb {
+                let event_val = match &event {
+                    GuiEvent::ButtonClicked  { widget_id, .. } => LuaValue::Integer(*widget_id as i64),
+                    GuiEvent::CheckboxChanged { value, .. }    => LuaValue::Boolean(*value),
+                    GuiEvent::InputChanged    { text, .. }     |
+                    GuiEvent::InputSubmitted  { text, .. }     => lua.create_string(text.as_str())
+                        .map(LuaValue::String)
+                        .unwrap_or(LuaValue::Nil),
+                    GuiEvent::MapClicked { room_id, .. }       => LuaValue::Integer(*room_id as i64),
+                    _ => LuaValue::Nil,
+                };
+                let _ = cb.call_async::<()>(event_val).await;
+            }
+        }
+    }
 }

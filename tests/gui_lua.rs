@@ -258,4 +258,61 @@ mod tests {
             panic!("expected MapView");
         }
     }
+
+    // ── Callbacks ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_button_on_click_callback_fires() {
+        use revenant::gui::GuiEvent;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let engine = make_engine();
+
+        engine.eval_lua(r#"
+            local btn = Gui.button("ok")
+            btn:on_click(function(widget_id)
+                _TEST_CALLBACK_FIRED = true
+            end)
+            _TEST_BTN_ID = btn._id
+        "#).await.unwrap();
+
+        let btn_id: u64 = engine.lua.globals().get::<u64>("_TEST_BTN_ID").unwrap();
+        let win_id = 999u64;
+        {
+            let state = engine.gui_state.lock().unwrap();
+            if let Some(tx) = &state.event_tx {
+                tx.send(GuiEvent::ButtonClicked { window_id: win_id, widget_id: btn_id }).unwrap();
+            }
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let result: bool = engine.lua.globals().get("_TEST_CALLBACK_FIRED").unwrap_or(false);
+        assert!(result, "on_click callback should have fired");
+    }
+
+    #[tokio::test]
+    async fn test_window_on_close_callback_fires() {
+        let engine = make_engine();
+        engine.eval_lua(r#"
+            local win, _ = Gui.window("Test", {})
+            win:on_close(function()
+                _TEST_CLOSE_FIRED = true
+            end)
+            _TEST_WIN_ID = win._id
+        "#).await.unwrap();
+
+        let win_id: u64 = engine.lua.globals().get::<u64>("_TEST_WIN_ID").unwrap();
+        {
+            let state = engine.gui_state.lock().unwrap();
+            if let Some(tx) = &state.event_tx {
+                tx.send(revenant::gui::GuiEvent::WindowClosed { window_id: win_id }).unwrap();
+            }
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let result: bool = engine.lua.globals().get("_TEST_CLOSE_FIRED").unwrap_or(false);
+        assert!(result, "on_close callback should have fired");
+    }
 }
