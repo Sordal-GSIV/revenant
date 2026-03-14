@@ -47,6 +47,8 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     spells::register(engine).map_err(|e| anyhow::anyhow!("spells register: {e}"))?;
     json::register(engine).map_err(|e| anyhow::anyhow!("json register: {e}"))?;
     version::register(engine).map_err(|e| anyhow::anyhow!("version register: {e}"))?;
+    #[cfg(feature = "monitor")]
+    crate::gui::lua_api::register(engine).map_err(|e| anyhow::anyhow!("gui register: {e}"))?;
     register_lua_builtins(engine)?;
     Ok(())
 }
