@@ -157,6 +157,8 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
         if let Some(f) = respond_sink.lock().unwrap().as_ref() {
             f(format!("<output class=\"mono\">{text}</output>\n"));
+        } else {
+            println!("[echo] {text}");
         }
         Ok(())
     })?)?;
