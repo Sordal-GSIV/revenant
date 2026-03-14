@@ -32,7 +32,8 @@ pub struct ScriptEngine {
     /// Ring-buffer of the last 2000 lines of game text (XmlEvent::Text), for the monitor window.
     pub game_log: Arc<Mutex<std::collections::VecDeque<String>>>,
     /// Maps raw Lua thread pointer (as usize) → script name for per-coroutine identity.
-    /// Populated when a thread is created; removed when the thread finishes.
+    /// Entries are inserted when a thread starts and removed when it completes
+    /// (but NOT when aborted via kill_script/kill_all).
     pub thread_names: Arc<Mutex<HashMap<usize, String>>>,
 }
 
@@ -234,7 +235,9 @@ impl ScriptEngine {
                 // Register per-coroutine identity: thread pointer → script name
                 let ptr = thread.to_pointer() as usize;
                 thread_names.lock().unwrap().insert(ptr, script_name.clone());
-                thread.into_async::<mlua::MultiValue>(mlua::MultiValue::new()).await?;
+                let r = thread.into_async::<mlua::MultiValue>(mlua::MultiValue::new()).await;
+                thread_names.lock().unwrap().remove(&ptr);
+                r?;
                 Ok(())
             }.await;
             if let Err(e) = result {

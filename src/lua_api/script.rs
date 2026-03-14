@@ -138,7 +138,9 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     // Register per-coroutine identity: thread pointer → script name
                     let ptr = thread.to_pointer() as usize;
                     thread_names.lock().unwrap().insert(ptr, script_name.clone());
-                    thread.into_async::<mlua::MultiValue>(mlua::MultiValue::new()).await?;
+                    let r = thread.into_async::<mlua::MultiValue>(mlua::MultiValue::new()).await;
+                    thread_names.lock().unwrap().remove(&ptr);
+                    r?;
                     Ok(())
                 }.await;
                 if let Err(e) = result {
