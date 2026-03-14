@@ -122,5 +122,34 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     gs_table.set_metatable(Some(mt));
 
     lua.globals().set("GameState", gs_table)?;
+
+    // -- Wounds table --
+    let gs = gs_arc.clone();
+    let wounds_table = lua.create_table()?;
+    let wounds_mt = lua.create_table()?;
+    wounds_mt.set("__index", lua.create_function(move |_, (_t, key): (LuaTable, String)| {
+        let gs = gs.read().unwrap();
+        match gs.wounds.get(&key) {
+            Some(v) => Ok(LuaValue::Integer(v as i64)),
+            None => Ok(LuaValue::Nil),
+        }
+    })?)?;
+    wounds_table.set_metatable(Some(wounds_mt));
+    lua.globals().set("Wounds", wounds_table)?;
+
+    // -- Scars table --
+    let gs = gs_arc.clone();
+    let scars_table = lua.create_table()?;
+    let scars_mt = lua.create_table()?;
+    scars_mt.set("__index", lua.create_function(move |_, (_t, key): (LuaTable, String)| {
+        let gs = gs.read().unwrap();
+        match gs.scars.get(&key) {
+            Some(v) => Ok(LuaValue::Integer(v as i64)),
+            None => Ok(LuaValue::Nil),
+        }
+    })?)?;
+    scars_table.set_metatable(Some(scars_mt));
+    lua.globals().set("Scars", scars_table)?;
+
     Ok(())
 }
