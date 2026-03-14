@@ -114,6 +114,59 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
+    // get() — block until next downstream line for this script
+    let script_lines_rx_get = engine.script_lines_rx.clone();
+    let thread_names_get = engine.thread_names.clone();
+    globals.set("get", lua.create_async_function(move |lua, ()| {
+        let script_lines_rx = script_lines_rx_get.clone();
+        let thread_names = thread_names_get.clone();
+        async move {
+            let ptr = lua.current_thread().to_pointer() as usize;
+            let script_name: String = {
+                let map = thread_names.lock().unwrap();
+                map.get(&ptr).cloned().ok_or_else(|| LuaError::RuntimeError("get() called outside script context".into()))?
+            };
+            let rx = {
+                let map = script_lines_rx.lock().unwrap();
+                map.get(&script_name).cloned()
+                    .ok_or_else(|| LuaError::RuntimeError(format!("no line buffer for script {script_name}")))?
+            };
+            let mut rx_guard = rx.lock().await;
+            match rx_guard.recv().await {
+                Some(line) => Ok(line),
+                None => Err(LuaError::RuntimeError("line buffer closed".into())),
+            }
+        }
+    })?)?;
+
+    // get_noblock() / nget() — non-blocking variant of get()
+    let script_lines_rx2 = engine.script_lines_rx.clone();
+    let thread_names2 = engine.thread_names.clone();
+    let get_noblock_fn = lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = {
+            let map = thread_names2.lock().unwrap();
+            map.get(&ptr).cloned().ok_or_else(|| LuaError::RuntimeError("get_noblock() called outside script context".into()))?
+        };
+        let rx = {
+            let map = script_lines_rx2.lock().unwrap();
+            map.get(&script_name).cloned()
+                .ok_or_else(|| LuaError::RuntimeError(format!("no line buffer for script {script_name}")))?
+        };
+        let result = match rx.try_lock() {
+            Ok(mut guard) => match guard.try_recv() {
+                Ok(line) => Ok(mlua::Value::String(lua.create_string(&line)?)),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(mlua::Value::Nil),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) =>
+                    Err(LuaError::RuntimeError("line buffer closed".into())),
+            },
+            Err(_) => Ok(mlua::Value::Nil), // receiver locked by async get()
+        };
+        result
+    })?;
+    globals.set("get_noblock", get_noblock_fn.clone())?;
+    globals.set("nget", get_noblock_fn)?;
+
     // fput(cmd) — put + wait for <prompt> from downstream
     let sink = engine.upstream_sink.clone();
     let dtx = engine.downstream_tx.clone();

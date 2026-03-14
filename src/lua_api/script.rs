@@ -63,6 +63,9 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     let scripts_dir2 = engine.scripts_dir.clone();
     let error_hook2 = engine.script_error_hook.clone();
     let thread_names_run = engine.thread_names.clone();
+    let downstream_tx_run = engine.downstream_tx.clone();
+    let script_lines_tx_run = engine.script_lines_tx.clone();
+    let script_lines_rx_run = engine.script_lines_rx.clone();
     t.set("run", lua.create_async_function(move |_, (name, args_str): (String, Option<String>)| {
         let running2 = running2.clone();
         let script_args2 = script_args2.clone();
@@ -70,6 +73,9 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         let scripts_dir2 = scripts_dir2.clone();
         let error_hook2 = error_hook2.clone();
         let thread_names_run = thread_names_run.clone();
+        let downstream_tx_run = downstream_tx_run.clone();
+        let script_lines_tx_run = script_lines_tx_run.clone();
+        let script_lines_rx_run = script_lines_rx_run.clone();
         async move {
             let dir = scripts_dir2.lock().unwrap().clone();
 
@@ -127,10 +133,47 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 globals.set("_REVENANT_SCRIPT_ARGS", all)?;
             }
 
+            // Create per-script line buffer (MPSC channel)
+            let (lines_tx, lines_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            script_lines_tx_run.lock().unwrap().insert(name.clone(), lines_tx);
+            script_lines_rx_run.lock().unwrap().insert(
+                name.clone(),
+                std::sync::Arc::new(tokio::sync::Mutex::new(lines_rx)),
+            );
+
+            // Spawn feeder task: broadcast channel → per-script MPSC buffer
+            if let Some(broadcast_tx) = downstream_tx_run.lock().unwrap().as_ref() {
+                let mut broadcast_rx = broadcast_tx.subscribe();
+                let feeder_tx = script_lines_tx_run.lock().unwrap().get(&name).unwrap().clone();
+                let feeder_name = name.clone();
+                tokio::spawn(async move {
+                    loop {
+                        match broadcast_rx.recv().await {
+                            Ok(bytes) => {
+                                let text = String::from_utf8_lossy(&bytes);
+                                for line in text.lines() {
+                                    let trimmed = line.trim_end();
+                                    if !trimmed.is_empty() {
+                                        if feeder_tx.send(trimmed.to_string()).is_err() {
+                                            return; // receiver dropped, script exited
+                                        }
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                        }
+                    }
+                });
+                let _ = feeder_name; // suppress unused warning
+            }
+
             let lua_clone = lua_ref.clone();
             let script_name = name.clone();
             let error_hook = error_hook2.clone();
             let thread_names = thread_names_run.clone();
+            let script_lines_tx_clone = script_lines_tx_run.clone();
+            let script_lines_rx_clone = script_lines_rx_run.clone();
             let handle = tokio::spawn(async move {
                 let result: LuaResult<()> = async {
                     let func: LuaFunction = lua_clone.load(&code).set_name(&script_name).into_function()?;
@@ -154,6 +197,9 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 if let Ok(globals) = lua_clone.globals().get::<mlua::Table>("_REVENANT_SCRIPT_ARGS") {
                     let _ = globals.raw_remove(script_name.as_str());
                 }
+                // Clean up line buffer entries
+                script_lines_tx_clone.lock().unwrap().remove(&script_name);
+                script_lines_rx_clone.lock().unwrap().remove(&script_name);
             });
             running2.lock().unwrap().insert(name, handle);
             Ok(())

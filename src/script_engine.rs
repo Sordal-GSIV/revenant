@@ -35,6 +35,10 @@ pub struct ScriptEngine {
     /// Entries are inserted when a thread starts and removed when it completes
     /// (but NOT when aborted via kill_script/kill_all).
     pub thread_names: Arc<Mutex<HashMap<usize, String>>>,
+    /// Per-script line buffer senders. Used by feeder tasks and send_to_script().
+    pub script_lines_tx: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
+    /// Per-script line buffer receivers. Key = script name.
+    pub script_lines_rx: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<String>>>>>>,
 }
 
 impl ScriptEngine {
@@ -60,6 +64,8 @@ impl ScriptEngine {
             respond_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(500))),
             game_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(2000))),
             thread_names: Arc::new(Mutex::new(HashMap::new())),
+            script_lines_tx: Arc::new(Mutex::new(HashMap::new())),
+            script_lines_rx: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -226,8 +232,45 @@ impl ScriptEngine {
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
 
+        // Create per-script line buffer (MPSC channel)
+        let (lines_tx, lines_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        self.script_lines_tx.lock().unwrap().insert(name.to_string(), lines_tx);
+        self.script_lines_rx.lock().unwrap().insert(
+            name.to_string(),
+            Arc::new(tokio::sync::Mutex::new(lines_rx)),
+        );
+
+        // Spawn feeder task: broadcast channel → per-script MPSC buffer
+        if let Some(broadcast_tx) = self.downstream_tx.lock().unwrap().as_ref() {
+            let mut broadcast_rx = broadcast_tx.subscribe();
+            let feeder_tx = self.script_lines_tx.lock().unwrap().get(name).unwrap().clone();
+            let feeder_name = name.to_string();
+            tokio::spawn(async move {
+                loop {
+                    match broadcast_rx.recv().await {
+                        Ok(bytes) => {
+                            let text = String::from_utf8_lossy(&bytes);
+                            for line in text.lines() {
+                                let trimmed = line.trim_end();
+                                if !trimmed.is_empty() {
+                                    if feeder_tx.send(trimmed.to_string()).is_err() {
+                                        return; // receiver dropped, script exited
+                                    }
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    }
+                }
+            });
+            let _ = feeder_name; // suppress unused warning
+        }
+
         let error_hook = self.script_error_hook.clone();
         let thread_names = self.thread_names.clone();
+        let script_lines_tx_clone = self.script_lines_tx.clone();
+        let script_lines_rx_clone = self.script_lines_rx.clone();
         let handle = tokio::spawn(async move {
             let result: LuaResult<()> = async {
                 let func: LuaFunction = lua.load(&code).set_name(&script_name).into_function()?;
@@ -251,6 +294,9 @@ impl ScriptEngine {
             if let Ok(globals) = lua.globals().get::<mlua::Table>("_REVENANT_SCRIPT_ARGS") {
                 let _ = globals.raw_remove(script_name.as_str());
             }
+            // Clean up line buffer entries
+            script_lines_tx_clone.lock().unwrap().remove(&script_name);
+            script_lines_rx_clone.lock().unwrap().remove(&script_name);
         });
 
         self.running.lock().unwrap().insert(name.to_string(), handle);
