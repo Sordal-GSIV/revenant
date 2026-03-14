@@ -144,3 +144,71 @@ fn test_apply_experience() {
     gs.apply(XmlEvent::Experience { value: 54321 });
     assert_eq!(gs.experience, 54321);
 }
+
+#[test]
+fn test_apply_indicator_standing() {
+    let mut gs = GameState::default();
+    assert!(!gs.standing);
+    gs.apply(XmlEvent::Indicator { name: "IconSTANDING".into(), visible: true });
+    assert!(gs.standing);
+    gs.apply(XmlEvent::Indicator { name: "IconSTANDING".into(), visible: false });
+    assert!(!gs.standing);
+}
+
+#[test]
+fn test_apply_indicator_poisoned() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Indicator { name: "IconPOISONED".into(), visible: true });
+    assert!(gs.poisoned);
+}
+
+#[test]
+fn test_apply_indicator_diseased() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Indicator { name: "IconDISEASED".into(), visible: true });
+    assert!(gs.diseased);
+}
+
+#[test]
+fn test_apply_indicator_hidden() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Indicator { name: "IconHIDDEN".into(), visible: true });
+    assert!(gs.hidden);
+}
+
+#[test]
+fn test_apply_indicator_invisible() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Indicator { name: "IconINVISIBLE".into(), visible: true });
+    assert!(gs.invisible);
+}
+
+#[test]
+fn test_apply_indicator_webbed() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Indicator { name: "IconWEBBED".into(), visible: true });
+    assert!(gs.webbed);
+}
+
+#[test]
+fn test_apply_indicator_joined() {
+    let mut gs = GameState::default();
+    gs.apply(XmlEvent::Indicator { name: "IconJOINED".into(), visible: true });
+    assert!(gs.joined);
+}
+
+#[test]
+fn test_new_indicators_default_false() {
+    let gs = GameState::default();
+    assert!(!gs.standing);
+    assert!(!gs.poisoned);
+    assert!(!gs.diseased);
+    assert!(!gs.hidden);
+    assert!(!gs.invisible);
+    assert!(!gs.webbed);
+    assert!(!gs.joined);
+    assert!(!gs.calmed);
+    assert!(!gs.cutthroat);
+    assert!(!gs.silenced);
+    assert!(!gs.bound);
+}
