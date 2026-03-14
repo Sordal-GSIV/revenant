@@ -297,6 +297,30 @@ async fn test_matchtimeout_returns_nil_on_timeout() {
 }
 
 #[tokio::test]
+async fn test_matchfind_searches_recent_log() {
+    let engine = ScriptEngine::new();
+    engine.install_lua_api().unwrap();
+
+    // Pre-populate game_log
+    {
+        let mut log = engine.game_log.lock().unwrap();
+        log.push_back("A goblin snarls.".to_string());
+        log.push_back("The troll attacks!".to_string());
+        log.push_back("You dodge.".to_string());
+    }
+
+    engine.eval_lua(r#"
+        local line = matchfind("troll", "dragon")
+        assert(line == "The troll attacks!", "expected troll line, got: " .. tostring(line))
+    "#).await.unwrap();
+
+    engine.eval_lua(r#"
+        local line = matchfind("dragon", "unicorn")
+        assert(line == nil, "expected nil for no match")
+    "#).await.unwrap();
+}
+
+#[tokio::test]
 async fn test_per_thread_identity_survives_yield() {
     let engine = ScriptEngine::new();
     engine.install_lua_api().unwrap();

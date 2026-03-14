@@ -6,6 +6,19 @@ function wait()
     return get()
 end
 
+function matchfind(...)
+    local patterns = {...}
+    local lines = reget(100)
+    for _, line in ipairs(lines) do
+        for _, pattern in ipairs(patterns) do
+            if string.find(line, pattern) then
+                return line
+            end
+        end
+    end
+    return nil
+end
+
 function matchwait(...)
     local patterns = {...}
     while true do
