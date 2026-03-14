@@ -36,6 +36,56 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 let tags = lua.create_table()?;
                 for (i, tag) in r.tags.iter().enumerate() { tags.set(i + 1, tag.as_str())?; }
                 t.set("tags", tags)?;
+
+                // wayto
+                let wayto_t = lua.create_table()?;
+                for (dest_id, cmd) in &r.wayto {
+                    wayto_t.set(dest_id.as_str(), cmd.as_str())?;
+                }
+                t.set("wayto", wayto_t)?;
+
+                // timeto
+                let timeto_t = lua.create_table()?;
+                for (dest_id, time) in &r.timeto {
+                    match time {
+                        Some(t_val) => timeto_t.set(dest_id.as_str(), *t_val)?,
+                        None => timeto_t.set(dest_id.as_str(), LuaValue::Nil)?,
+                    }
+                }
+                t.set("timeto", timeto_t)?;
+
+                // paths
+                let paths_t = lua.create_table()?;
+                for (i, p) in r.paths.iter().enumerate() {
+                    paths_t.set(i + 1, p.as_str())?;
+                }
+                t.set("paths", paths_t)?;
+
+                // location, terrain
+                match &r.location {
+                    Some(loc) => t.set("location", loc.as_str())?,
+                    None => t.set("location", LuaValue::Nil)?,
+                }
+                match &r.terrain {
+                    Some(ter) => t.set("terrain", ter.as_str())?,
+                    None => t.set("terrain", LuaValue::Nil)?,
+                }
+
+                // uid — can be string, array, or null in the JSON
+                match &r.uid {
+                    Some(serde_json::Value::String(s)) => t.set("uid", s.as_str())?,
+                    Some(serde_json::Value::Array(arr)) => {
+                        let uid_t = lua.create_table()?;
+                        for (i, v) in arr.iter().enumerate() {
+                            if let serde_json::Value::String(s) = v {
+                                uid_t.set(i + 1, s.as_str())?;
+                            }
+                        }
+                        t.set("uid", uid_t)?;
+                    }
+                    _ => t.set("uid", LuaValue::Nil)?,
+                }
+
                 Ok(LuaValue::Table(t))
             }
         }
