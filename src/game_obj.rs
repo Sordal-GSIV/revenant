@@ -71,6 +71,11 @@ pub struct GameObjRegistry {
     pub right_hand: Option<GameObj>,
     pub left_hand: Option<GameObj>,
     pub room_desc: Vec<GameObj>,
+    /// Familiar's room objects — parallel registries for the familiar's perspective.
+    pub fam_loot: Vec<GameObj>,
+    pub fam_npcs: Vec<GameObj>,
+    pub fam_pcs: Vec<GameObj>,
+    pub fam_room_desc: Vec<GameObj>,
     /// Deduplication index: composite key → canonical GameObj instance.
     /// Persists across room transitions so the same object reuses the same instance.
     index: HashMap<String, GameObj>,
@@ -153,6 +158,42 @@ impl GameObjRegistry {
         }
     }
 
+    pub fn new_fam_npc(&mut self, id: &str, noun: &str, name: &str) {
+        let obj = self.find_or_create(id, noun, name, None, None);
+        if let Some(existing) = self.fam_npcs.iter_mut().find(|o| o.id == id) {
+            *existing = obj;
+        } else {
+            self.fam_npcs.push(obj);
+        }
+    }
+
+    pub fn new_fam_loot(&mut self, id: &str, noun: &str, name: &str) {
+        let obj = self.find_or_create(id, noun, name, None, None);
+        if let Some(existing) = self.fam_loot.iter_mut().find(|o| o.id == id) {
+            *existing = obj;
+        } else {
+            self.fam_loot.push(obj);
+        }
+    }
+
+    pub fn new_fam_pc(&mut self, id: &str, noun: &str, name: &str) {
+        let obj = self.find_or_create(id, noun, name, None, None);
+        if let Some(existing) = self.fam_pcs.iter_mut().find(|o| o.id == id) {
+            *existing = obj;
+        } else {
+            self.fam_pcs.push(obj);
+        }
+    }
+
+    pub fn new_fam_room_desc(&mut self, id: &str, noun: &str, name: &str) {
+        let obj = self.find_or_create(id, noun, name, None, None);
+        if let Some(existing) = self.fam_room_desc.iter_mut().find(|o| o.id == id) {
+            *existing = obj;
+        } else {
+            self.fam_room_desc.push(obj);
+        }
+    }
+
     // ── Clear methods ────────────────────────────────────────────────────────
 
     pub fn clear_loot(&mut self) { self.loot.clear(); }
@@ -161,6 +202,18 @@ impl GameObjRegistry {
     pub fn clear_inv(&mut self) { self.inv.clear(); self.contents.clear(); }
     pub fn clear_room_desc(&mut self) { self.room_desc.clear(); }
     pub fn clear_all_containers(&mut self) { self.contents.clear(); }
+
+    pub fn clear_fam_loot(&mut self) { self.fam_loot.clear(); }
+    pub fn clear_fam_npcs(&mut self) { self.fam_npcs.clear(); }
+    pub fn clear_fam_pcs(&mut self) { self.fam_pcs.clear(); }
+    pub fn clear_fam_room_desc(&mut self) { self.fam_room_desc.clear(); }
+
+    pub fn clear_familiar(&mut self) {
+        self.clear_fam_loot();
+        self.clear_fam_npcs();
+        self.clear_fam_pcs();
+        self.clear_fam_room_desc();
+    }
 
     /// Called on `<nav rm="...">` — clears all room-scoped registries.
     /// The deduplication index is intentionally preserved so re-encountered
@@ -237,5 +290,40 @@ impl GameObjRegistry {
             self.index.insert(key, obj.clone());
             obj
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fam_npc_creation() {
+        let mut reg = GameObjRegistry::new();
+        reg.new_fam_npc("100", "kobold", "a kobold");
+        assert_eq!(reg.fam_npcs.len(), 1);
+        assert_eq!(reg.fam_npcs[0].noun, "kobold");
+    }
+
+    #[test]
+    fn test_fam_registries_clear() {
+        let mut reg = GameObjRegistry::new();
+        reg.new_fam_npc("100", "kobold", "a kobold");
+        reg.new_fam_loot("200", "chest", "a chest");
+        reg.new_fam_pc("300", "Gandalf", "Gandalf");
+        reg.new_fam_room_desc("400", "sign", "a sign");
+        reg.clear_familiar();
+        assert!(reg.fam_npcs.is_empty());
+        assert!(reg.fam_loot.is_empty());
+        assert!(reg.fam_pcs.is_empty());
+        assert!(reg.fam_room_desc.is_empty());
+    }
+
+    #[test]
+    fn test_fam_npc_dedup() {
+        let mut reg = GameObjRegistry::new();
+        reg.new_fam_npc("100", "kobold", "a kobold");
+        reg.new_fam_npc("100", "kobold", "a kobold");
+        assert_eq!(reg.fam_npcs.len(), 1);
     }
 }

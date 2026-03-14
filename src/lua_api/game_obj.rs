@@ -253,6 +253,66 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         })?)?;
     }
 
+    // GameObj.fam_npcs()
+    {
+        let go = go_arc.clone();
+        game_obj_tbl.raw_set("fam_npcs", lua.create_function(move |lua, ()| {
+            let reg = go.lock().unwrap();
+            match reg.as_ref() {
+                None => Ok(lua.create_table()?),
+                Some(r) => {
+                    let r2 = r.lock().unwrap();
+                    obj_array(lua, &r2.fam_npcs, r.clone(), None)
+                }
+            }
+        })?)?;
+    }
+
+    // GameObj.fam_loot()
+    {
+        let go = go_arc.clone();
+        game_obj_tbl.raw_set("fam_loot", lua.create_function(move |lua, ()| {
+            let reg = go.lock().unwrap();
+            match reg.as_ref() {
+                None => Ok(lua.create_table()?),
+                Some(r) => {
+                    let r2 = r.lock().unwrap();
+                    obj_array(lua, &r2.fam_loot, r.clone(), None)
+                }
+            }
+        })?)?;
+    }
+
+    // GameObj.fam_pcs()
+    {
+        let go = go_arc.clone();
+        game_obj_tbl.raw_set("fam_pcs", lua.create_function(move |lua, ()| {
+            let reg = go.lock().unwrap();
+            match reg.as_ref() {
+                None => Ok(lua.create_table()?),
+                Some(r) => {
+                    let r2 = r.lock().unwrap();
+                    obj_array(lua, &r2.fam_pcs, r.clone(), None)
+                }
+            }
+        })?)?;
+    }
+
+    // GameObj.fam_room_desc()
+    {
+        let go = go_arc.clone();
+        game_obj_tbl.raw_set("fam_room_desc", lua.create_function(move |lua, ()| {
+            let reg = go.lock().unwrap();
+            match reg.as_ref() {
+                None => Ok(lua.create_table()?),
+                Some(r) => {
+                    let r2 = r.lock().unwrap();
+                    obj_array(lua, &r2.fam_room_desc, r.clone(), None)
+                }
+            }
+        })?)?;
+    }
+
     // GameObj.dead() — dead NPCs
     {
         let go = go_arc.clone();

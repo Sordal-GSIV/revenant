@@ -506,9 +506,9 @@ impl StreamParser {
                         events.push(XmlEvent::FamiliarRoomDescription { text: s.to_string() });
                     }
                     _ => {
-                        if s.starts_with("You also see") {
+                        if s.contains("You also see") {
                             self.fam_mode = FamMode::Things;
-                        } else if s.starts_with("Also here") {
+                        } else if s.contains("Also here") {
                             self.fam_mode = FamMode::People;
                         } else if s.contains("Obvious paths") || s.contains("Obvious exits") {
                             self.fam_mode = FamMode::Paths;

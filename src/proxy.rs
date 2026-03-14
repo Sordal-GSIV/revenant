@@ -304,6 +304,18 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                                 crate::xml_parser::XmlEvent::RoomId { .. } => {
                                     go.clear_for_room_transition();
                                 }
+                                crate::xml_parser::XmlEvent::FamiliarRoomName { .. } => {
+                                    go.clear_familiar();
+                                }
+                                crate::xml_parser::XmlEvent::FamiliarObjCreate { id, noun, name, category } => {
+                                    match category {
+                                        ObjCategory::Npc      => go.new_fam_npc(id, noun, name),
+                                        ObjCategory::Loot     => go.new_fam_loot(id, noun, name),
+                                        ObjCategory::Pc       => go.new_fam_pc(id, noun, name),
+                                        ObjCategory::RoomDesc => go.new_fam_room_desc(id, noun, name),
+                                        _ => {}
+                                    }
+                                }
                                 _ => {}
                             }
                         }

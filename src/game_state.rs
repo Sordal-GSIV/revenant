@@ -263,6 +263,13 @@ pub struct GameState {
 
     pub name: String,
     pub room_count: u32,
+
+    pub bounty_task: String,
+    pub society_task: String,
+
+    pub familiar_room_title: String,
+    pub familiar_room_description: String,
+    pub familiar_room_exits: Vec<String>,
 }
 
 impl GameState {
@@ -351,6 +358,29 @@ impl GameState {
                 }
                 self.scars.set(&body_part, scar);
             }
+            XmlEvent::ClearStream { ref id } if id == "bounty" => {
+                self.bounty_task.clear();
+            }
+            XmlEvent::StreamText { ref stream_id, ref text } if stream_id == "bounty" => {
+                self.bounty_task.push_str(text);
+            }
+            XmlEvent::PopStream { ref id } if id == "bounty" => {
+                self.bounty_task = self.bounty_task.trim().to_string();
+            }
+            XmlEvent::StreamText { ref stream_id, ref text } if stream_id == "society" => {
+                self.society_task = text.trim().to_string();
+            }
+            XmlEvent::FamiliarRoomName { name } => {
+                self.familiar_room_title = name;
+                self.familiar_room_description.clear();
+                self.familiar_room_exits.clear();
+            }
+            XmlEvent::FamiliarRoomDescription { text } => {
+                self.familiar_room_description.push_str(&text);
+            }
+            XmlEvent::FamiliarRoomExits { exits } => {
+                self.familiar_room_exits = exits;
+            }
             _ => {}
         }
     }
@@ -376,4 +406,72 @@ fn epoch_to_instant(epoch: i64) -> Option<Instant> {
         .as_secs() as i64;
     let delta = epoch - now_epoch;
     if delta <= 0 { None } else { Some(Instant::now() + Duration::from_secs(delta as u64)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::xml_parser::XmlEvent;
+
+    #[test]
+    fn test_bounty_task_accumulate_and_trim() {
+        let mut gs = GameState::default();
+        gs.apply(XmlEvent::StreamText {
+            stream_id: "bounty".into(),
+            text: "  You have a task  ".into(),
+        });
+        assert_eq!(gs.bounty_task, "  You have a task  ");
+        gs.apply(XmlEvent::PopStream { id: "bounty".into() });
+        assert_eq!(gs.bounty_task, "You have a task");
+    }
+
+    #[test]
+    fn test_bounty_task_clear() {
+        let mut gs = GameState::default();
+        gs.apply(XmlEvent::StreamText {
+            stream_id: "bounty".into(),
+            text: "old task".into(),
+        });
+        gs.apply(XmlEvent::ClearStream { id: "bounty".into() });
+        assert_eq!(gs.bounty_task, "");
+    }
+
+    #[test]
+    fn test_society_task_assignment() {
+        let mut gs = GameState::default();
+        gs.apply(XmlEvent::StreamText {
+            stream_id: "society".into(),
+            text: "  You are a member of Voln  ".into(),
+        });
+        assert_eq!(gs.society_task, "You are a member of Voln");
+    }
+
+    #[test]
+    fn test_joined_indicator() {
+        let mut gs = GameState::default();
+        assert!(!gs.joined);
+        gs.apply(XmlEvent::Indicator { name: "IconJOINED".into(), visible: true });
+        assert!(gs.joined);
+        gs.apply(XmlEvent::Indicator { name: "IconJOINED".into(), visible: false });
+        assert!(!gs.joined);
+    }
+
+    #[test]
+    fn test_familiar_room_name_clears_desc_exits() {
+        let mut gs = GameState::default();
+        gs.familiar_room_description = "old desc".into();
+        gs.familiar_room_exits = vec!["north".into()];
+        gs.apply(XmlEvent::FamiliarRoomName { name: "[New Room]".into() });
+        assert_eq!(gs.familiar_room_title, "[New Room]");
+        assert_eq!(gs.familiar_room_description, "");
+        assert!(gs.familiar_room_exits.is_empty());
+    }
+
+    #[test]
+    fn test_familiar_room_description_appends() {
+        let mut gs = GameState::default();
+        gs.apply(XmlEvent::FamiliarRoomDescription { text: "Part 1. ".into() });
+        gs.apply(XmlEvent::FamiliarRoomDescription { text: "Part 2.".into() });
+        assert_eq!(gs.familiar_room_description, "Part 1. Part 2.");
+    }
 }

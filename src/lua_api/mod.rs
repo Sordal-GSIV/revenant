@@ -1,9 +1,13 @@
+pub mod bounty;
 pub mod char;
 pub mod crypto;
+pub mod familiar;
 pub mod room;
 pub mod file;
 pub mod game_state;
 pub mod game_obj;
+pub mod group;
+pub mod society;
 pub mod hooks;
 pub mod http;
 pub mod json;
@@ -31,6 +35,10 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     http::register(engine).map_err(|e| anyhow::anyhow!("http register: {e}"))?;
     map::register(engine).map_err(|e| anyhow::anyhow!("map register: {e}"))?;
     game_obj::register(engine).map_err(|e| anyhow::anyhow!("game_obj register: {e}"))?;
+    bounty::register(engine).map_err(|e| anyhow::anyhow!("bounty register: {e}"))?;
+    society::register(engine).map_err(|e| anyhow::anyhow!("society register: {e}"))?;
+    group::register(engine).map_err(|e| anyhow::anyhow!("group register: {e}"))?;
+    familiar::register(engine).map_err(|e| anyhow::anyhow!("familiar register: {e}"))?;
     script::register(engine)?;
     settings::register(engine)?;
     stats::register(engine).map_err(|e| anyhow::anyhow!("stats register: {e}"))?;
