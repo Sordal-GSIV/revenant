@@ -33,8 +33,8 @@ end
 
 function matchtimeout(timeout, ...)
     local patterns = {...}
-    local deadline = os.time() + timeout
-    while os.time() < deadline do
+    local elapsed = 0
+    while elapsed < timeout do
         local line = get_noblock()
         if line then
             for _, pattern in ipairs(patterns) do
@@ -44,6 +44,7 @@ function matchtimeout(timeout, ...)
             end
         else
             pause(0.1)
+            elapsed = elapsed + 0.1
         end
     end
     return nil
@@ -160,14 +161,15 @@ function die_with_me(target)
 end
 
 function waitforre(pattern, timeout)
-    local deadline = timeout and (os.time() + timeout) or nil
+    local elapsed = 0
     while true do
-        if deadline and os.time() >= deadline then return nil end
+        if timeout and elapsed >= timeout then return nil end
         local line
-        if deadline then
+        if timeout then
             line = get_noblock()
             if not line then
                 pause(0.1)
+                elapsed = elapsed + 0.1
             end
         else
             line = get()

@@ -179,6 +179,7 @@ impl ScriptEngine {
         if let Some(h) = handle { h.abort(); }
         self.script_lines_tx.lock().unwrap().remove(name);
         self.script_lines_rx.lock().unwrap().remove(name);
+        self.at_exit_hooks.lock().unwrap().remove(name);
     }
 
     /// Kill all running scripts (respects no_kill_all protection).
@@ -200,9 +201,11 @@ impl ScriptEngine {
         {
             let mut tx_map = self.script_lines_tx.lock().unwrap();
             let mut rx_map = self.script_lines_rx.lock().unwrap();
+            let mut hooks_map = self.at_exit_hooks.lock().unwrap();
             for (name, _) in &to_kill {
                 tx_map.remove(name);
                 rx_map.remove(name);
+                hooks_map.remove(name);
             }
         }
         for (_name, handle) in to_kill {
