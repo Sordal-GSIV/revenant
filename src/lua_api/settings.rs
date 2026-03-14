@@ -29,15 +29,20 @@ fn register_char_settings(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
-    // __newindex: coerce any Lua value to string via Lua's tostring()
+    // __newindex: nil deletes the key; any other value is coerced to string via tostring()
     let (db2, c2, g2) = (db.clone(), char.clone(), game.clone());
     mt.set("__newindex", lua.create_function(move |lua, (_t, key, val): (LuaTable, String, LuaValue)| {
-        let tostring: LuaFunction = lua.globals().get("tostring")?;
-        let s: String = tostring.call(val)?;
         let guard = db2.lock().unwrap();
         let db = match guard.as_ref() { Some(d) => d, None => return Ok(()) };
-        db.set_char_setting(&c2.lock().unwrap(), &g2.lock().unwrap(), &key, &s)
-            .map_err(|e| LuaError::RuntimeError(e.to_string()))
+        if matches!(val, LuaValue::Nil) {
+            db.delete_char_setting(&c2.lock().unwrap(), &g2.lock().unwrap(), &key)
+                .map_err(|e| LuaError::RuntimeError(e.to_string()))
+        } else {
+            let tostring: LuaFunction = lua.globals().get("tostring")?;
+            let s: String = tostring.call(val)?;
+            db.set_char_setting(&c2.lock().unwrap(), &g2.lock().unwrap(), &key, &s)
+                .map_err(|e| LuaError::RuntimeError(e.to_string()))
+        }
     })?)?;
 
     t.set_metatable(Some(mt));
