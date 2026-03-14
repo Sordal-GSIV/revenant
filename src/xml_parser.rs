@@ -50,6 +50,12 @@ pub enum XmlEvent {
     GameObjHandUpdate { hand: ObjHand, id: String, noun: String, name: String },
     /// The hand is empty ("nothing").
     GameObjHandClear { hand: ObjHand },
+    /// An injury image tag inside <component id="injuries">.
+    Injury {
+        body_part: String,
+        wound: u8,
+        scar: u8,
+    },
 }
 
 /// Streaming GemStone XML parser.
@@ -155,6 +161,20 @@ impl StreamParser {
         if inner.ends_with('/') {
             // Self-closing tag: <tag attr="val"/>
             let body = inner.trim_end_matches('/').trim_end();
+            let tag_name_sc = body.split_whitespace().next().unwrap_or("");
+
+            // Injury images inside <component id="injuries">
+            if tag_name_sc == "image" && self.current_component.as_deref() == Some("injuries") {
+                let xml = format!("<{}/>\n", body);
+                let attrs = attrs_from_xml(&xml);
+                if let Some(body_part) = attr(&attrs, "id") {
+                    let name = attr(&attrs, "name").unwrap_or_default();
+                    let (wound, scar) = parse_injury_name(&name);
+                    events.push(XmlEvent::Injury { body_part, wound, scar });
+                }
+                return;
+            }
+
             let xml = format!("<{}/>\n", body);
             if let Some(ev) = parse_empty_xml(&xml) {
                 match ev {
@@ -540,4 +560,25 @@ fn parse_exits(title: &str) -> Vec<String> {
             }
             Vec::new()
         })
+}
+
+/// Parse injury image name into (wound, scar) severity.
+/// Examples: "Injury3" -> (3, 0), "Scar1" -> (0, 1), "Nsys2" -> (2, 0), "" -> (0, 0)
+fn parse_injury_name(name: &str) -> (u8, u8) {
+    let digit = name.chars().find(|c| c.is_ascii_digit())
+        .and_then(|c| c.to_digit(10))
+        .map(|d| d.min(3))
+        .unwrap_or(0) as u8;
+    if digit == 0 {
+        return (0, 0);
+    }
+    if name.starts_with("Injury") || name.starts_with("injury") {
+        (digit, 0)
+    } else if name.starts_with("Scar") || name.starts_with("scar") {
+        (0, digit)
+    } else if name.starts_with("Nsys") || name.starts_with("nsys") {
+        (digit, 0)
+    } else {
+        (0, 0)
+    }
 }
