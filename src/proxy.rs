@@ -142,8 +142,65 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
 
         // Open database for this character session
         match crate::db::Db::open(&config.db_path) {
-            Ok(db) => engine.set_db(db, config.character.as_deref().unwrap_or(""), &config.game),
+            Ok(db) => {
+                engine.set_db(db, config.character.as_deref().unwrap_or(""), &config.game);
+
+                // Construct Infomon with a second Db handle
+                match crate::db::Db::open(&config.db_path) {
+                    Ok(infomon_db) => {
+                        let character = config.character.as_deref().unwrap_or("").to_string();
+                        let game = config.game.clone();
+                        let infomon = crate::infomon::Infomon::new(infomon_db, &character, &game);
+                        *engine.infomon.lock().unwrap() = Some(infomon);
+
+                        // Register Infomon downstream hook
+                        let infomon_ref = engine.infomon.clone();
+                        engine.downstream_hooks.lock().unwrap().add_sync(
+                            "__revenant_infomon",
+                            move |line| {
+                                if let Some(ref mut im) = *infomon_ref.lock().unwrap() {
+                                    for l in line.lines() {
+                                        im.parse(l);
+                                    }
+                                }
+                                Some(line.to_string())
+                            },
+                        );
+                    }
+                    Err(e) => tracing::warn!("Failed to open Infomon DB: {e}"),
+                }
+            }
             Err(e) => tracing::warn!("Failed to open DB at {}: {e}", config.db_path),
+        }
+
+        // Load spell definitions
+        let spell_path = if std::path::Path::new("data/effect-list.xml").exists() {
+            "data/effect-list.xml".to_string()
+        } else {
+            format!("{}/data/effect-list.xml",
+                std::env::current_dir().unwrap_or_default().display())
+        };
+        match crate::spell_data::SpellList::load(&spell_path) {
+            Ok(sl) => {
+                tracing::info!("Loaded {} spell definitions", sl.len());
+                engine.set_spell_list(std::sync::Arc::new(sl));
+            }
+            Err(e) => tracing::warn!("Failed to load effect-list.xml: {e} (spell system disabled)"),
+        }
+
+        // Load gameobj type data
+        let type_path = if std::path::Path::new("data/gameobj-data.xml").exists() {
+            "data/gameobj-data.xml".to_string()
+        } else {
+            format!("{}/data/gameobj-data.xml",
+                std::env::current_dir().unwrap_or_default().display())
+        };
+        match crate::type_data::TypeData::load(&type_path) {
+            Ok(td) => {
+                tracing::info!("Loaded gameobj type data");
+                engine.set_type_data(std::sync::Arc::new(td));
+            }
+            Err(e) => tracing::warn!("Failed to load gameobj-data.xml: {e} (type data disabled)"),
         }
 
         engine.install_lua_api()?;
@@ -368,6 +425,8 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         *engine.respond_sink.lock().unwrap() = None;
         *engine.game_state.lock().unwrap() = None;
         engine.clear_game_objs();
+        *engine.infomon.lock().unwrap() = None;
+        engine.downstream_hooks.lock().unwrap().remove("__revenant_infomon");
         info!("Session ended, engine state cleared");
         session_result?;
     }
