@@ -1,5 +1,5 @@
 use revenant::script_engine::ScriptEngine;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[tokio::test]
 async fn test_get_receives_downstream_line() {
@@ -30,6 +30,39 @@ async fn test_get_receives_downstream_line() {
     let errs = errors.lock().unwrap();
     assert!(errs.is_empty(), "script errors: {:?}", *errs);
     assert!(!engine.is_running("gettest"), "script should have finished");
+}
+
+#[tokio::test]
+async fn test_waitrt_returns_immediately_when_no_roundtime() {
+    use revenant::game_state::GameState;
+    let gs = Arc::new(RwLock::new(GameState::default()));
+    let engine = ScriptEngine::new();
+    engine.set_game_state(gs);
+    engine.install_lua_api().unwrap();
+
+    // No roundtime set, should return immediately
+    let start = tokio::time::Instant::now();
+    engine.eval_lua("waitrt()").await.unwrap();
+    assert!(start.elapsed() < tokio::time::Duration::from_millis(200),
+        "waitrt() should return immediately with no roundtime");
+}
+
+#[tokio::test]
+async fn test_waitrt_waits_for_roundtime() {
+    use revenant::game_state::GameState;
+    use std::time::Instant as StdInstant;
+    let gs = Arc::new(RwLock::new(GameState::default()));
+    // Set roundtime to expire 0.3s from now
+    gs.write().unwrap().roundtime_end = Some(StdInstant::now() + std::time::Duration::from_millis(300));
+    let engine = ScriptEngine::new();
+    engine.set_game_state(gs);
+    engine.install_lua_api().unwrap();
+
+    let start = tokio::time::Instant::now();
+    engine.eval_lua("waitrt()").await.unwrap();
+    let elapsed = start.elapsed();
+    assert!(elapsed >= tokio::time::Duration::from_millis(250),
+        "waitrt() should wait for roundtime, elapsed: {:?}", elapsed);
 }
 
 #[tokio::test]

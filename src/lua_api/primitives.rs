@@ -73,6 +73,44 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
+    // waitrt() — sleep until roundtime expires
+    let gs_waitrt = engine.game_state.clone();
+    globals.set("waitrt", lua.create_async_function(move |_, ()| {
+        let gs_waitrt = gs_waitrt.clone();
+        async move {
+            let rt = {
+                let lock = gs_waitrt.lock().unwrap();
+                match lock.as_ref() {
+                    Some(gs) => gs.read().unwrap().roundtime(),
+                    None => 0.0,
+                }
+            };
+            if rt > 0.0 {
+                tokio::time::sleep(tokio::time::Duration::from_secs_f64(rt + 0.1)).await;
+            }
+            Ok(())
+        }
+    })?)?;
+
+    // waitcastrt() — sleep until cast roundtime expires
+    let gs_waitcastrt = engine.game_state.clone();
+    globals.set("waitcastrt", lua.create_async_function(move |_, ()| {
+        let gs_waitcastrt = gs_waitcastrt.clone();
+        async move {
+            let rt = {
+                let lock = gs_waitcastrt.lock().unwrap();
+                match lock.as_ref() {
+                    Some(gs) => gs.read().unwrap().cast_roundtime(),
+                    None => 0.0,
+                }
+            };
+            if rt > 0.0 {
+                tokio::time::sleep(tokio::time::Duration::from_secs_f64(rt + 0.1)).await;
+            }
+            Ok(())
+        }
+    })?)?;
+
     // waitfor(pattern [, timeout_secs]) — block coroutine until pattern appears downstream
     let dtx = engine.downstream_tx.clone();
     globals.set("waitfor", lua.create_async_function(move |_, (pattern, timeout): (String, Option<f64>)| {
