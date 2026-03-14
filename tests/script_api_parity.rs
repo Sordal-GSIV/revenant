@@ -180,6 +180,66 @@ async fn test_wait_clears_and_returns_next_line() {
 }
 
 #[tokio::test]
+async fn test_waitforre_matches_pattern() {
+    let engine = ScriptEngine::new();
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"
+        local line, captures = waitforre("(%d+) gold")
+        assert(line == "You have 500 gold coins.", "wrong line: " .. tostring(line))
+        assert(captures[1] == "500", "wrong capture: " .. tostring(captures[1]))
+    "#).unwrap();
+
+    engine.start_script("wfr", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    tx.send(Arc::new(b"The wind blows.\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    tx.send(Arc::new(b"You have 500 gold coins.\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "script errors: {:?}", *errs);
+}
+
+#[tokio::test]
+async fn test_waitforre_timeout_returns_nil() {
+    let engine = ScriptEngine::new();
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"
+        local line = waitforre("never matches", 2)
+        assert(line == nil, "expected nil on timeout, got: " .. tostring(line))
+    "#).unwrap();
+
+    engine.start_script("wfr_to", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    tx.send(Arc::new(b"unrelated text\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(2500)).await;
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "script errors: {:?}", *errs);
+}
+
+#[tokio::test]
 async fn test_per_thread_identity_survives_yield() {
     let engine = ScriptEngine::new();
     engine.install_lua_api().unwrap();
