@@ -32,14 +32,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
 
     // pause(seconds) — async sleep, pause-aware
     let paused = engine.paused.clone();
+    let thread_names_pause = engine.thread_names.clone();
     globals.set("pause", lua.create_async_function(move |lua, secs: f64| {
         let paused = paused.clone();
+        let thread_names = thread_names_pause.clone();
         async move {
-            // NOTE: _REVENANT_SCRIPT is a shared Lua global set on launch. In concurrent-script
-            // scenarios, this may read the wrong name if another script launched between yields.
-            // Race condition accepted for v2; scripts are typically launched sequentially in practice.
-            let script_name: String = lua.globals()
-                .get("_REVENANT_SCRIPT").unwrap_or_default();
+            let ptr = lua.current_thread().to_pointer() as usize;
+            let script_name: String = thread_names.lock().unwrap()
+                .get(&ptr).cloned()
+                .unwrap_or_else(|| lua.globals().get("_REVENANT_SCRIPT").unwrap_or_default());
 
             // If already paused: wait in 0.1s increments until unpaused
             loop {

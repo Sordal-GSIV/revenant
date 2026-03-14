@@ -62,12 +62,14 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     let lua_ref = engine.lua.clone();
     let scripts_dir2 = engine.scripts_dir.clone();
     let error_hook2 = engine.script_error_hook.clone();
+    let thread_names_run = engine.thread_names.clone();
     t.set("run", lua.create_async_function(move |_, (name, args_str): (String, Option<String>)| {
         let running2 = running2.clone();
         let script_args2 = script_args2.clone();
         let lua_ref = lua_ref.clone();
         let scripts_dir2 = scripts_dir2.clone();
         let error_hook2 = error_hook2.clone();
+        let thread_names_run = thread_names_run.clone();
         async move {
             let dir = scripts_dir2.lock().unwrap().clone();
 
@@ -128,10 +130,14 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             let lua_clone = lua_ref.clone();
             let script_name = name.clone();
             let error_hook = error_hook2.clone();
+            let thread_names = thread_names_run.clone();
             let handle = tokio::spawn(async move {
                 let result: LuaResult<()> = async {
                     let func: LuaFunction = lua_clone.load(&code).set_name(&script_name).into_function()?;
                     let thread = lua_clone.create_thread(func)?;
+                    // Register per-coroutine identity: thread pointer → script name
+                    let ptr = thread.to_pointer() as usize;
+                    thread_names.lock().unwrap().insert(ptr, script_name.clone());
                     thread.into_async::<mlua::MultiValue>(mlua::MultiValue::new()).await?;
                     Ok(())
                 }.await;
@@ -154,14 +160,17 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
 
     // Build a metatable for the Script table so that Script.vars and Script.name
     // are computed properties (not stored values). The __index metamethod intercepts
-    // field access and returns the current value from Lua globals.
+    // field access and returns the current value from the per-thread identity map.
+    let thread_names_meta = engine.thread_names.clone();
     let mt = lua.create_table()?;
-    mt.set("__index", lua.create_function(|lua, (_tbl, key): (LuaValue, String)| {
+    mt.set("__index", lua.create_function(move |lua, (_tbl, key): (LuaValue, String)| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = thread_names_meta.lock().unwrap()
+            .get(&ptr).cloned()
+            .unwrap_or_else(|| lua.globals().get("_REVENANT_SCRIPT").unwrap_or_default());
         match key.as_str() {
             "vars" => {
                 // Return the args table for the currently running script
-                let script_name: String = lua.globals().get("_REVENANT_SCRIPT")
-                    .unwrap_or_else(|_| String::new());
                 let all_args: mlua::Result<mlua::Table> = lua.globals().get("_REVENANT_SCRIPT_ARGS");
                 match all_args {
                     Ok(t) => match t.get::<mlua::Table>(script_name.as_str()) {
@@ -173,9 +182,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             }
             "name" => {
                 // Return the name of the currently running script
-                let name: String = lua.globals().get("_REVENANT_SCRIPT")
-                    .unwrap_or_else(|_| String::new());
-                Ok(mlua::Value::String(lua.create_string(&name)?))
+                Ok(mlua::Value::String(lua.create_string(&script_name)?))
             }
             _ => Ok(mlua::Value::Nil),
         }

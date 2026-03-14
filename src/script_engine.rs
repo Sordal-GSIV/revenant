@@ -31,6 +31,9 @@ pub struct ScriptEngine {
     pub respond_log: Arc<Mutex<std::collections::VecDeque<String>>>,
     /// Ring-buffer of the last 2000 lines of game text (XmlEvent::Text), for the monitor window.
     pub game_log: Arc<Mutex<std::collections::VecDeque<String>>>,
+    /// Maps raw Lua thread pointer (as usize) → script name for per-coroutine identity.
+    /// Populated when a thread is created; removed when the thread finishes.
+    pub thread_names: Arc<Mutex<HashMap<usize, String>>>,
 }
 
 impl ScriptEngine {
@@ -55,6 +58,7 @@ impl ScriptEngine {
             paused: Arc::new(Mutex::new(std::collections::HashSet::new())),
             respond_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(500))),
             game_log: Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(2000))),
+            thread_names: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -222,10 +226,14 @@ impl ScriptEngine {
         }
 
         let error_hook = self.script_error_hook.clone();
+        let thread_names = self.thread_names.clone();
         let handle = tokio::spawn(async move {
             let result: LuaResult<()> = async {
                 let func: LuaFunction = lua.load(&code).set_name(&script_name).into_function()?;
                 let thread = lua.create_thread(func)?;
+                // Register per-coroutine identity: thread pointer → script name
+                let ptr = thread.to_pointer() as usize;
+                thread_names.lock().unwrap().insert(ptr, script_name.clone());
                 thread.into_async::<mlua::MultiValue>(mlua::MultiValue::new()).await?;
                 Ok(())
             }.await;
