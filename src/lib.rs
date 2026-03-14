@@ -9,6 +9,7 @@ pub mod proxy;
 pub mod script_engine;
 pub mod xml_parser;
 pub mod db;
+pub mod infomon;
 pub mod lua_api;
 pub mod map;
 #[cfg(feature = "monitor")]
