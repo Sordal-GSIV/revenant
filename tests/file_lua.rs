@@ -111,3 +111,30 @@ async fn test_file_read_nonexistent() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn test_file_replace_renames_within_sandbox() {
+    let tmp = TempDir::new().unwrap();
+    let engine = setup_with_dir(tmp.path().to_str().unwrap());
+    engine.eval_lua(r#"
+        File.write("source.txt", "content")
+        local ok, err = File.replace("source.txt", "dest.txt")
+        assert(ok == true, "replace failed: " .. tostring(err))
+        assert(File.exists("dest.txt") == true, "dest should exist")
+        assert(File.exists("source.txt") == false, "source should be gone")
+        local content = File.read("dest.txt")
+        assert(content == "content", "content mismatch")
+    "#).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_file_replace_rejects_absolute_dst_outside_sandbox() {
+    let tmp = TempDir::new().unwrap();
+    let engine = setup_with_dir(tmp.path().to_str().unwrap());
+    engine.eval_lua(r#"
+        File.write("source.txt", "data")
+        local ok, err = File.replace("source.txt", "/etc/passwd")
+        assert(ok == nil, "should have failed")
+        assert(err ~= nil, "should have error message")
+    "#).await.unwrap();
+}

@@ -224,6 +224,47 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         })?,
     )?;
 
+    // File.replace(src, dst) -> true or nil, error
+    // src must be sandboxed and exist. dst must be sandboxed OR equal the engine binary path.
+    let dir = engine.scripts_dir.clone();
+    file_table.set(
+        "replace",
+        lua.create_function(move |_, (src, dst): (String, String)| {
+            let d = dir.lock().unwrap().clone();
+            // src must be an existing sandboxed path
+            let src_path = match resolve_sandboxed_existing(&d, &src) {
+                Ok(p) => p,
+                Err(e) => return Ok((None::<bool>, Some(e))),
+            };
+            // dst: sandboxed or equals the engine binary path
+            let dst_path = if dst.starts_with('/') {
+                // Absolute path — only allowed if it matches the engine binary
+                let engine_path = match std::env::current_exe() {
+                    Ok(p) => p,
+                    Err(e) => return Ok((None, Some(format!("could not determine engine path: {e}")))),
+                };
+                let dst_canonical = std::path::PathBuf::from(&dst);
+                if dst_canonical != engine_path {
+                    return Ok((None, Some("absolute dst must equal engine binary path".to_string())));
+                }
+                dst_canonical
+            } else {
+                match resolve_sandboxed(&d, &dst) {
+                    Ok(p) => p,
+                    Err(e) => return Ok((None, Some(e))),
+                }
+            };
+            // Ensure dst parent directory exists
+            if let Some(parent) = dst_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match std::fs::rename(&src_path, &dst_path) {
+                Ok(()) => Ok((Some(true), None)),
+                Err(e) => Ok((None, Some(format!("{e}")))),
+            }
+        })?,
+    )?;
+
     globals.set("File", file_table)?;
     Ok(())
 }
