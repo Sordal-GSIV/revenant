@@ -579,6 +579,7 @@ fn parse_injury_name(name: &str) -> (u8, u8) {
     } else if name.starts_with("Nsys") || name.starts_with("nsys") {
         (digit, 0)
     } else {
+        tracing::warn!("parse_injury_name: unrecognized injury name prefix: {name:?}");
         (0, 0)
     }
 }
