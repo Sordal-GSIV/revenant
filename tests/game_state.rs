@@ -90,42 +90,42 @@ fn test_apply_mode_sets_room_id() {
 
 #[test]
 fn test_stance_to_str_and_value() {
-    assert_eq!(Stance::None.to_str(), None);
+    assert_eq!(Stance::None.as_str(), None);
     assert_eq!(Stance::None.to_value(), None);
-    assert_eq!(Stance::Offensive.to_str(), Some("offensive"));
+    assert_eq!(Stance::Offensive.as_str(), Some("offensive"));
     assert_eq!(Stance::Offensive.to_value(), Some(100));
-    assert_eq!(Stance::Defensive.to_str(), Some("defensive"));
+    assert_eq!(Stance::Defensive.as_str(), Some("defensive"));
     assert_eq!(Stance::Defensive.to_value(), Some(0));
-    assert_eq!(Stance::Neutral.to_str(), Some("neutral"));
+    assert_eq!(Stance::Neutral.as_str(), Some("neutral"));
     assert_eq!(Stance::Neutral.to_value(), Some(40));
 }
 
 #[test]
 fn test_mind_to_str_and_value() {
-    assert_eq!(MindState::Clear.to_str(), "clear");
+    assert_eq!(MindState::Clear.as_str(), "clear");
     assert_eq!(MindState::Clear.to_value(), 0);
-    assert_eq!(MindState::Awakening.to_str(), "awakening");
+    assert_eq!(MindState::Awakening.as_str(), "awakening");
     assert_eq!(MindState::Awakening.to_value(), 10);
-    assert_eq!(MindState::Stunned.to_str(), "stunned");
+    assert_eq!(MindState::Stunned.as_str(), "stunned");
     assert_eq!(MindState::Stunned.to_value(), 100);
-    assert_eq!(MindState::BecomingFuzzy.to_str(), "becoming fuzzy");
+    assert_eq!(MindState::BecomingFuzzy.as_str(), "becoming fuzzy");
     assert_eq!(MindState::BecomingFuzzy.to_value(), 65);
 }
 
 #[test]
 fn test_encumbrance_to_str_and_value() {
-    assert_eq!(EncumbranceState::None.to_str(), "none");
+    assert_eq!(EncumbranceState::None.as_str(), "none");
     assert_eq!(EncumbranceState::None.to_value(), 0);
-    assert_eq!(EncumbranceState::Overburdened.to_str(), "overburdened");
+    assert_eq!(EncumbranceState::Overburdened.as_str(), "overburdened");
     assert_eq!(EncumbranceState::Overburdened.to_value(), 5);
-    assert_eq!(EncumbranceState::VeryHeavy.to_str(), "very heavy");
+    assert_eq!(EncumbranceState::VeryHeavy.as_str(), "very heavy");
     assert_eq!(EncumbranceState::VeryHeavy.to_value(), 4);
 }
 
 #[test]
 fn test_game_to_str() {
-    assert_eq!(Game::GemStone.to_str(), "GS");
-    assert_eq!(Game::DragonRealms.to_str(), "DR");
+    assert_eq!(Game::GemStone.as_str(), "GS");
+    assert_eq!(Game::DragonRealms.as_str(), "DR");
 }
 
 #[test]

@@ -19,7 +19,7 @@ pub enum MindState {
 pub enum EncumbranceState { #[default] None, Light, Moderate, Heavy, VeryHeavy, Overburdened }
 
 impl Stance {
-    pub fn to_str(&self) -> Option<&'static str> {
+    pub fn as_str(&self) -> Option<&'static str> {
         match self {
             Stance::None => None,
             Stance::Offensive => Some("offensive"),
@@ -44,7 +44,7 @@ impl Stance {
 }
 
 impl MindState {
-    pub fn to_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             MindState::Clear => "clear",
             MindState::Dabbling => "dabbling",
@@ -95,7 +95,7 @@ impl MindState {
 }
 
 impl EncumbranceState {
-    pub fn to_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             EncumbranceState::None => "none",
             EncumbranceState::Light => "light",
@@ -118,7 +118,7 @@ impl EncumbranceState {
 }
 
 impl Game {
-    pub fn to_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Game::GemStone => "GS",
             Game::DragonRealms => "DR",
