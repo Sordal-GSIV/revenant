@@ -311,7 +311,8 @@ impl GameState {
             XmlEvent::Experience { value }         => self.experience = value,
             XmlEvent::RightHand { item }           => self.right_hand = item,
             XmlEvent::LeftHand { item }            => self.left_hand = item,
-            XmlEvent::Mode { room_id, .. }         => { if let Some(id) = room_id { self.room_id = Some(id); } }
+            XmlEvent::Mode { room_id: Some(id), .. } => self.room_id = Some(id),
+            XmlEvent::Mode { .. }                   => {}
             XmlEvent::Indicator { name, visible }  => match name.as_str() {
                 "IconBLEEDING" => self.bleeding = visible,
                 "IconSTUNNED"  => self.stunned = visible,

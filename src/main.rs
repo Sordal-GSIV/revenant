@@ -68,6 +68,7 @@ fn main() -> anyhow::Result<()> {
 /// - WSL2: invokes reg.exe via Windows interop (/mnt/c/Windows/System32/reg.exe).
 /// - Linux + Wine: invokes `wine reg query`.
 /// - macOS: returns None (Avalon uses a SAL file, no registry needed).
+#[allow(dead_code)]
 fn simu_registry_dir(subkey: &str) -> Option<String> {
     let reg_path = format!("HKLM\\SOFTWARE\\WOW6432Node\\Simutronics\\{subkey}");
 
@@ -107,8 +108,9 @@ fn simu_registry_dir(subkey: &str) -> Option<String> {
     }
 }
 
+#[allow(dead_code)]
 fn launch_game_client(config: &revenant::config::Config, session: &revenant::eaccess::Session) {
-    let listen_port = config.listen.split(':').last()
+    let listen_port = config.listen.split(':').next_back()
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(4900);
     let key = &session.key;

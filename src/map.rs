@@ -98,7 +98,7 @@ impl MapData {
                     None => continue, // null timeto = impassable, skip
                 };
                 let new_cost = cost + edge_cost;
-                let better = dist.get(&dest_id).map_or(true, |&(c, _, _)| new_cost < c);
+                let better = dist.get(&dest_id).is_none_or(|&(c, _, _)| new_cost < c);
                 if better {
                     dist.insert(dest_id, (new_cost, room_id, cmd.clone()));
                     heap.push(MinHeapEntry { cost: new_cost, room_id: dest_id });

@@ -91,7 +91,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             let v = Version::parse(&normalize_version(&version))
                 .map_err(|e| LuaError::runtime(format!("invalid version '{version}': {e}")))?;
             let req = parse_constraint(&constraint)
-                .map_err(|e| LuaError::runtime(e))?;
+                .map_err(LuaError::runtime)?;
             Ok(req.matches(&v))
         })?,
     )?;

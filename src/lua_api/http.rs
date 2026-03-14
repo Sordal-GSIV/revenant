@@ -57,7 +57,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             match client.get(&url).send().await {
                 Ok(resp) => {
                     let status = resp.status().as_u16();
-                    if status < 200 || status >= 300 {
+                    if !(200..300).contains(&status) {
                         return Ok((None, Some(format!("HTTP {status}"))));
                     }
                     let body = resp

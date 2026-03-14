@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
+#[allow(clippy::type_complexity)]
 pub struct ScriptEngine {
     pub lua: Arc<Lua>,
     pub upstream_sink: Arc<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>>,

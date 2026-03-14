@@ -108,8 +108,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         srv_w.write_all(b"<c>_flag Display Dialog Boxes 0\n").await?;
 
         let game_state: Arc<RwLock<GameState>> = {
-            let mut gs = GameState::default();
-            gs.name = config.character.clone().unwrap_or_default();
+            let gs = GameState { name: config.character.clone().unwrap_or_default(), ..Default::default() };
             Arc::new(RwLock::new(gs))
         };
 

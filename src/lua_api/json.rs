@@ -2,6 +2,7 @@ use mlua::prelude::*;
 
 use crate::script_engine::ScriptEngine;
 
+#[allow(clippy::only_used_in_recursion)]
 fn lua_value_to_json(lua: &Lua, val: LuaValue) -> LuaResult<serde_json::Value> {
     match val {
         LuaValue::Nil => Ok(serde_json::Value::Null),
