@@ -107,7 +107,11 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         srv_w.write_all(b"<c>_flag Display Inventory Boxes 1\n").await?;
         srv_w.write_all(b"<c>_flag Display Dialog Boxes 0\n").await?;
 
-        let game_state: Arc<RwLock<GameState>> = Arc::new(RwLock::new(GameState::default()));
+        let game_state: Arc<RwLock<GameState>> = {
+            let mut gs = GameState::default();
+            gs.name = config.character.clone().unwrap_or_default();
+            Arc::new(RwLock::new(gs))
+        };
 
         // Broadcast channel: downstream raw bytes → waiting scripts (waitfor)
         let (downstream_tx, _) = broadcast::channel::<Arc<Vec<u8>>>(256);
