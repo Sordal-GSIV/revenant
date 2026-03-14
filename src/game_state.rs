@@ -126,10 +126,11 @@ impl Game {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct ActiveSpell {
+#[derive(Debug, Clone)]
+pub struct ActiveSpellEntry {
     pub name: String,
     pub duration_secs: Option<u32>,
+    pub activated_at: std::time::Instant,
 }
 
 /// Wound or scar severity for each of 16 body parts (0 = none, 1-3 = severity).
@@ -221,7 +222,7 @@ pub struct GameState {
     pub room_id: Option<u32>,
 
     pub prepared_spell: Option<String>,
-    pub active_spells: Vec<ActiveSpell>,
+    pub active_spells: Vec<ActiveSpellEntry>,
 
     pub stance: Stance,
     pub mind: MindState,
@@ -332,10 +333,17 @@ impl GameState {
                 _ => {}
             },
             XmlEvent::ActiveSpell { name, duration } => {
-                self.active_spells.push(ActiveSpell {
-                    name,
-                    duration_secs: duration,
-                });
+                // Deduplication: update existing entry if same name
+                if let Some(existing) = self.active_spells.iter_mut().find(|s| s.name == name) {
+                    existing.duration_secs = duration;
+                    existing.activated_at = std::time::Instant::now();
+                } else {
+                    self.active_spells.push(ActiveSpellEntry {
+                        name,
+                        duration_secs: duration,
+                        activated_at: std::time::Instant::now(),
+                    });
+                }
             }
             XmlEvent::Injury { body_part, wound, scar } => {
                 if !self.wounds.set(&body_part, wound) {
@@ -345,6 +353,14 @@ impl GameState {
             }
             _ => {}
         }
+    }
+
+    pub fn clear_active_spells(&mut self) {
+        self.active_spells.clear();
+    }
+
+    pub fn remove_active_spell(&mut self, name: &str) {
+        self.active_spells.retain(|s| s.name != name);
     }
 }
 

@@ -1,4 +1,4 @@
-use revenant::game_state::{GameState, Stance, MindState, EncumbranceState, Game, ActiveSpell};
+use revenant::game_state::{GameState, Stance, MindState, EncumbranceState, Game, ActiveSpellEntry};
 use revenant::script_engine::ScriptEngine;
 use std::sync::{Arc, RwLock};
 
@@ -100,8 +100,8 @@ async fn test_gamestate_spells() {
     let mut gs = GameState::default();
     gs.prepared_spell = Some("Spirit Shield".to_string());
     gs.active_spells = vec![
-        ActiveSpell { name: "Spirit Shield".to_string(), duration_secs: Some(300) },
-        ActiveSpell { name: "Bravery".to_string(), duration_secs: None },
+        ActiveSpellEntry { name: "Spirit Shield".to_string(), duration_secs: Some(300), activated_at: std::time::Instant::now() },
+        ActiveSpellEntry { name: "Bravery".to_string(), duration_secs: None, activated_at: std::time::Instant::now() },
     ];
     let engine = setup_with_state(gs);
     engine.eval_lua(r#"
