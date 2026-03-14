@@ -611,8 +611,54 @@ fn parse_color(s: &str) -> [f32; 4] {
 }
 
 // ── Gui.wait() (Task 5) ───────────────────────────────────────────────────────
-fn register_wait(_lua: &mlua::Lua, _gui: &LuaTable, _cbs: Arc<Mutex<GuiCallbacks>>) -> LuaResult<()> {
-    // Populated in Task 5
+fn register_wait(
+    lua: &mlua::Lua,
+    gui: &LuaTable,
+    cbs: Arc<Mutex<GuiCallbacks>>,
+) -> LuaResult<()> {
+    gui.set("wait", lua.create_async_function(move |lua, (target, event_str): (LuaTable, String)| {
+        let cbs2 = cbs.clone();
+        async move {
+            let target_type: String = target.get("_type").unwrap_or_default();
+            let wait_key = if target_type == "window" {
+                let win_id: WindowId = target.get("_id")?;
+                match event_str.as_str() {
+                    "close" => WaitKey::WindowClose { window_id: win_id },
+                    "click" => WaitKey::WindowClick { window_id: win_id },
+                    other   => return Err(mlua::Error::RuntimeError(
+                        format!("Gui.wait: unknown event '{}' for window", other)
+                    )),
+                }
+            } else {
+                let widget_id: WidgetId = target.get("_id")?;
+                let et = match event_str.as_str() {
+                    "click"  => WaitEventType::Click,
+                    "change" => WaitEventType::Change,
+                    "submit" => WaitEventType::Submit,
+                    other    => return Err(mlua::Error::RuntimeError(
+                        format!("Gui.wait: unknown event '{}' for widget", other)
+                    )),
+                };
+                WaitKey::Widget { widget_id, event_type: et }
+            };
+
+            let (tx, rx) = oneshot::channel::<Option<LuaValue>>();
+            cbs2.lock().unwrap().waiters.insert(wait_key, tx);
+
+            match rx.await {
+                Ok(Some(val)) => Ok(LuaMultiValue::from_vec(vec![val, LuaValue::Nil])),
+                Ok(None) => {
+                    Ok(LuaMultiValue::from_vec(vec![
+                        LuaValue::Nil,
+                        LuaValue::String(lua.create_string("window closed")?),
+                    ]))
+                }
+                Err(_) => {
+                    Ok(LuaMultiValue::from_vec(vec![LuaValue::Nil, LuaValue::Nil]))
+                }
+            }
+        }
+    })?)?;
     Ok(())
 }
 

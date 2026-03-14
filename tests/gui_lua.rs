@@ -315,4 +315,95 @@ mod tests {
         let result: bool = engine.lua.globals().get("_TEST_CLOSE_FIRED").unwrap_or(false);
         assert!(result, "on_close callback should have fired");
     }
+
+    // ── Gui.wait() ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_gui_wait_button_returns_on_event() {
+        let engine = make_engine();
+
+        engine.eval_lua(r#"
+            local btn = Gui.button("ok")
+            _TEST_BTN_ID = btn._id
+            _TEST_WAIT_RESULT = nil
+        "#).await.unwrap();
+
+        let btn_id: u64 = engine.lua.globals().get::<u64>("_TEST_BTN_ID").unwrap();
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let engine2 = engine.clone();
+        tokio::spawn(async move {
+            engine2.eval_lua(r#"
+                local btn2 = { _id = _TEST_BTN_ID, _type = "widget" }
+                _TEST_WAIT_RESULT = Gui.wait(btn2, "click")
+            "#).await.unwrap();
+            let _ = done_tx.send(());
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        {
+            let state = engine.gui_state.lock().unwrap();
+            if let Some(tx) = &state.event_tx {
+                tx.send(revenant::gui::GuiEvent::ButtonClicked {
+                    window_id: 0,
+                    widget_id: btn_id,
+                }).unwrap();
+            }
+        }
+
+        tokio::time::timeout(std::time::Duration::from_millis(500), done_rx).await
+            .expect("timed out waiting for Gui.wait to complete")
+            .unwrap();
+
+        let result: i64 = engine.lua.globals().get("_TEST_WAIT_RESULT").unwrap_or(0);
+        assert_eq!(result, btn_id as i64);
+    }
+
+    #[tokio::test]
+    async fn test_gui_wait_returns_nil_on_window_close() {
+        let engine = make_engine();
+
+        engine.eval_lua(r#"
+            local win, _ = Gui.window("Test", {})
+            local btn = Gui.button("ok")
+            win:set_root(btn)
+            _TEST_WIN_ID = win._id
+            _TEST_BTN_ID = btn._id
+            _TEST_WAIT_RESULT = "not_nil"
+        "#).await.unwrap();
+
+        let win_id: u64 = engine.lua.globals().get::<u64>("_TEST_WIN_ID").unwrap();
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let engine2 = engine.clone();
+        tokio::spawn(async move {
+            engine2.eval_lua(r#"
+                local btn2 = { _id = _TEST_BTN_ID, _type = "widget" }
+                local result, reason = Gui.wait(btn2, "click")
+                _TEST_WAIT_RESULT = result
+                _TEST_WAIT_REASON = reason
+            "#).await.unwrap();
+            let _ = done_tx.send(());
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        {
+            let state = engine.gui_state.lock().unwrap();
+            if let Some(tx) = &state.event_tx {
+                tx.send(revenant::gui::GuiEvent::WindowClosed { window_id: win_id }).unwrap();
+            }
+        }
+
+        tokio::time::timeout(std::time::Duration::from_millis(500), done_rx).await
+            .expect("timed out")
+            .unwrap();
+
+        let result: mlua::Value = engine.lua.globals().get("_TEST_WAIT_RESULT").unwrap();
+        assert!(matches!(result, mlua::Value::Nil), "result should be nil on window close");
+
+        let reason: String = engine.lua.globals().get("_TEST_WAIT_REASON").unwrap_or_default();
+        assert_eq!(reason, "window closed");
+    }
 }
