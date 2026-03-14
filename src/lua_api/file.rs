@@ -243,7 +243,10 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     Ok(p) => p,
                     Err(e) => return Ok((None, Some(format!("could not determine engine path: {e}")))),
                 };
-                let dst_canonical = std::path::PathBuf::from(&dst);
+                let dst_canonical = match std::path::PathBuf::from(&dst).canonicalize() {
+                    Ok(p) => p,
+                    Err(e) => return Ok((None, Some(format!("dst path error: {e}")))),
+                };
                 if dst_canonical != engine_path {
                     return Ok((None, Some("absolute dst must equal engine binary path".to_string())));
                 }
