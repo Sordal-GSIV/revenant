@@ -20,3 +20,5 @@ pub mod monitor;
 pub mod credentials;
 #[cfg(feature = "monitor")]
 pub mod login;
+#[cfg(feature = "monitor")]
+pub mod gui;
