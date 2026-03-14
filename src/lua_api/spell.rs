@@ -21,6 +21,54 @@ fn build_spell_table(
     t.set("availability", spell.availability.as_str())?;
     t.set("stackable", spell.stackable)?;
     t.set("persist_on_death", spell.persist_on_death)?;
+    t.set("stance", spell.stance)?;
+    t.set("channel", spell.channel)?;
+    t.set("multicastable", spell.multicastable)?;
+    t.set("real_time", spell.real_time)?;
+    t.set("max_duration", spell.max_duration)?;
+    t.set("no_incant", spell.no_incant)?;
+    t.set("refreshable", spell.refreshable)?;
+
+    // Optional strings
+    match &spell.msgup {
+        Some(s) => t.set("msgup", s.as_str())?,
+        None => t.set("msgup", mlua::Value::Nil)?,
+    }
+    match &spell.msgdn {
+        Some(s) => t.set("msgdn", s.as_str())?,
+        None => t.set("msgdn", mlua::Value::Nil)?,
+    }
+    match &spell.cast_proc {
+        Some(s) => t.set("cast_proc", s.as_str())?,
+        None => t.set("cast_proc", mlua::Value::Nil)?,
+    }
+
+    // Cost formulas (convenience: return self-cast formula as top-level field)
+    match spell.mana_cost() {
+        Some(s) => t.set("mana_cost", s)?,
+        None => t.set("mana_cost", mlua::Value::Nil)?,
+    }
+    match spell.spirit_cost() {
+        Some(s) => t.set("spirit_cost", s)?,
+        None => t.set("spirit_cost", mlua::Value::Nil)?,
+    }
+    match spell.stamina_cost() {
+        Some(s) => t.set("stamina_cost", s)?,
+        None => t.set("stamina_cost", mlua::Value::Nil)?,
+    }
+
+    // Duration formula (self-cast)
+    match spell.duration_self() {
+        Some(s) => t.set("duration_formula", s)?,
+        None => t.set("duration_formula", mlua::Value::Nil)?,
+    }
+
+    // Bonus list (table of bonus type names)
+    let bonus_table = lua.create_table()?;
+    for (i, key) in spell.bonus.keys().enumerate() {
+        bonus_table.raw_set(i + 1, key.as_str())?;
+    }
+    t.set("bonus_list", bonus_table)?;
 
     // Live: active check
     let mut is_active = false;
