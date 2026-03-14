@@ -1,16 +1,19 @@
 #![cfg(feature = "monitor")]
 
+use crate::gui::renderer::Renderer;
 use crate::script_engine::ScriptEngine;
 use eframe::egui;
 use std::sync::Arc;
 
 pub struct MonitorApp {
-    engine: Arc<ScriptEngine>,
+    engine:   Arc<ScriptEngine>,
+    renderer: Renderer,
 }
 
 impl MonitorApp {
     pub fn new(engine: Arc<ScriptEngine>) -> Self {
-        Self { engine }
+        let renderer = Renderer::new(engine.gui_state.clone());
+        Self { engine, renderer }
     }
 }
 
@@ -135,6 +138,9 @@ impl eframe::App for MonitorApp {
                     }
                 });
         });
+
+        // Render any script-created GUI windows
+        self.renderer.render_frame(ctx);
     }
 }
 
