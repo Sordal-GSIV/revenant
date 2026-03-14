@@ -18,7 +18,7 @@ pub enum XmlEvent {
     Prompt { time: i64, text: String },
     RoomName { name: String },
     RoomDescription { text: String },
-    RoomExits { exits: Vec<String> },
+    RoomExits { exits: Vec<String>, raw: String },
     RoomId { id: u32 },
     PreparedSpell { name: String },
     SpellCleared,
@@ -593,7 +593,7 @@ fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
             let id = attr(attrs, "id").unwrap_or_default();
             let title = attr(attrs, "title").unwrap_or_default();
             if id == "room exits" {
-                Some(XmlEvent::RoomExits { exits: parse_exits(&title) })
+                Some(XmlEvent::RoomExits { exits: parse_exits(&title), raw: title })
             } else {
                 Some(XmlEvent::StreamWindow { id, title })
             }
@@ -682,6 +682,8 @@ fn parse_start_tag(tag: &str, attrs: &Attrs, text: &str) -> Option<XmlEvent> {
 fn parse_exits(title: &str) -> Vec<String> {
     title.strip_prefix("Obvious exits: ")
         .or_else(|| title.strip_prefix("Obvious exit: "))
+        .or_else(|| title.strip_prefix("Obvious paths: "))
+        .or_else(|| title.strip_prefix("Obvious path: "))
         .map(|s| s.split(", ").map(str::trim).map(String::from).collect())
         .unwrap_or_else(|| {
             if !title.is_empty() {

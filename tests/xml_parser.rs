@@ -62,7 +62,7 @@ fn test_parse_room_exits() {
     let xml = r#"<streamWindow id="room exits" title="Obvious exits: north, east"/>"#;
     let events = parse_chunk(xml);
     match events.iter().find(|e| matches!(e, XmlEvent::RoomExits { .. })) {
-        Some(XmlEvent::RoomExits { exits }) => {
+        Some(XmlEvent::RoomExits { exits, .. }) => {
             assert_eq!(exits, &vec!["north".to_string(), "east".to_string()]);
         }
         _ => panic!("Expected RoomExits"),

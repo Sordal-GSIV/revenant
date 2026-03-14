@@ -219,6 +219,7 @@ pub struct GameState {
     pub room_name: String,
     pub room_description: String,
     pub room_exits: Vec<String>,
+    pub room_exits_string: String,
     pub room_id: Option<u32>,
 
     pub prepared_spell: Option<String>,
@@ -311,7 +312,7 @@ impl GameState {
             XmlEvent::Prompt { time, text }        => { self.server_time = time; self.prompt = text; }
             XmlEvent::RoomName { name }            => self.room_name = name,
             XmlEvent::RoomDescription { text }     => self.room_description = text,
-            XmlEvent::RoomExits { exits }          => self.room_exits = exits,
+            XmlEvent::RoomExits { exits, raw }      => { self.room_exits = exits; self.room_exits_string = raw; }
             XmlEvent::RoomId { id }                => { self.room_id = Some(id); self.room_count += 1; },
             XmlEvent::PreparedSpell { name }       => self.prepared_spell = Some(name),
             XmlEvent::SpellCleared                 => self.prepared_spell = None,

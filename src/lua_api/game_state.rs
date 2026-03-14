@@ -63,6 +63,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             "concentration"     => Ok(LuaValue::Integer(gs.concentration as i64)),
             "max_concentration" => Ok(LuaValue::Integer(gs.max_concentration as i64)),
             "room_description"  => Ok(LuaValue::String(lua.create_string(&gs.room_description)?)),
+            "room_exits_string" => Ok(LuaValue::String(lua.create_string(&gs.room_exits_string)?)),
             "room_exits" => {
                 let t = lua.create_table()?;
                 for (i, exit) in gs.room_exits.iter().enumerate() {

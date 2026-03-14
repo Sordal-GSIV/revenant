@@ -40,7 +40,7 @@ fn test_apply_health_and_max() {
 #[test]
 fn test_apply_room_exits() {
     let mut gs = GameState::default();
-    gs.apply(XmlEvent::RoomExits { exits: vec!["north".into(), "east".into()] });
+    gs.apply(XmlEvent::RoomExits { exits: vec!["north".into(), "east".into()], raw: "Obvious exits: north, east".into() });
     assert_eq!(gs.room_exits, vec!["north", "east"]);
 }
 
