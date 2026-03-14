@@ -469,3 +469,25 @@ async fn test_move_sends_direction_and_waits() {
     let cmds = sent.lock().unwrap();
     assert!(cmds.iter().any(|c| c.contains("north")), "should have sent north");
 }
+
+#[tokio::test]
+async fn test_raw_fput_still_works() {
+    let sent: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let engine = ScriptEngine::new();
+    let cap = sent.clone();
+    engine.set_upstream_sink(move |cmd| { cap.lock().unwrap().push(cmd); });
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+    engine.install_lua_api().unwrap();
+
+    // _raw_fput sends command and waits for prompt
+    let tx2 = tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        tx2.send(Arc::new(b"<prompt time=\"123\">></prompt>\n".to_vec())).unwrap();
+    });
+
+    engine.eval_lua(r#"_raw_fput("look")"#).await.unwrap();
+    let cmds = sent.lock().unwrap();
+    assert!(cmds.iter().any(|c| c.contains("look")));
+}

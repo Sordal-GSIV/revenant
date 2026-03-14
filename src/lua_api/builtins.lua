@@ -119,6 +119,40 @@ function u()   return move("up") end
 function d()   return move("down") end
 function out() return move("out") end
 
+function fput(cmd, ...)
+    local waitingfor = {...}
+    -- Wait for roundtime
+    local rt = checkrt()
+    if rt > 0 then pause(rt + 0.3) end
+    -- Wait for stun
+    while GameState.stunned do pause(0.5) end
+    if #waitingfor == 0 then
+        -- No patterns: send and wait for prompt (original behavior)
+        _raw_fput(cmd)
+    else
+        -- Retry until one of the waitingfor patterns appears
+        while true do
+            _raw_fput(cmd)
+            while true do
+                local line = get()
+                for _, pattern in ipairs(waitingfor) do
+                    if string.find(line, pattern) then return line end
+                end
+                -- If we hit a prompt without matching, break to resend
+                if string.find(line, "^>$") or string.find(line, "<prompt") then
+                    break
+                end
+            end
+        end
+    end
+end
+
+function multifput(...)
+    for _, cmd in ipairs({...}) do
+        fput(cmd)
+    end
+end
+
 function waitforre(pattern, timeout)
     local deadline = timeout and (os.time() + timeout) or nil
     while true do

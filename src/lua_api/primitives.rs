@@ -267,10 +267,10 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(table)
     })?)?;
 
-    // fput(cmd) — put + wait for <prompt> from downstream
+    // _raw_fput(cmd) — put + wait for <prompt> from downstream (low-level; use fput() from Lua)
     let sink = engine.upstream_sink.clone();
     let dtx = engine.downstream_tx.clone();
-    globals.set("fput", lua.create_async_function(move |_, cmd: String| {
+    globals.set("_raw_fput", lua.create_async_function(move |_, cmd: String| {
         let sink = sink.clone();
         let dtx = dtx.clone();
         async move {
