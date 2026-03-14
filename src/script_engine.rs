@@ -165,11 +165,21 @@ impl ScriptEngine {
     pub async fn kill_script(&self, name: &str) {
         let handle = self.running.lock().unwrap().remove(name);
         if let Some(h) = handle { h.abort(); }
+        self.script_lines_tx.lock().unwrap().remove(name);
+        self.script_lines_rx.lock().unwrap().remove(name);
     }
 
     /// Kill all running scripts.
     pub async fn kill_all(&self) {
         let handles: Vec<_> = self.running.lock().unwrap().drain().collect();
+        {
+            let mut tx_map = self.script_lines_tx.lock().unwrap();
+            let mut rx_map = self.script_lines_rx.lock().unwrap();
+            for (name, _) in &handles {
+                tx_map.remove(name);
+                rx_map.remove(name);
+            }
+        }
         for (_name, handle) in handles {
             handle.abort();
         }
