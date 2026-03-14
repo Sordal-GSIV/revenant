@@ -30,13 +30,34 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
-    // Script.list() → array table of running script names
+    // Script.list() → array table of running script names (excludes hidden scripts)
     let running = engine.running.clone();
+    let hidden_list = engine.hidden.clone();
     t.set("list", lua.create_function(move |lua, ()| {
         let names: Vec<String> = {
             let r = running.lock().unwrap();
+            let hidden_set = hidden_list.lock().unwrap();
             r.iter()
-                .filter(|(_, h)| !h.is_finished())
+                .filter(|(n, h)| !h.is_finished() && !hidden_set.contains(*n))
+                .map(|(n, _)| n.clone())
+                .collect()
+        };
+        let out = lua.create_table()?;
+        for (i, name) in names.iter().enumerate() {
+            out.set(i + 1, name.as_str())?;
+        }
+        Ok(out)
+    })?)?;
+
+    // Script.hidden() → array table of running hidden script names
+    let running_hidden = engine.running.clone();
+    let hidden_hidden = engine.hidden.clone();
+    t.set("hidden", lua.create_function(move |lua, ()| {
+        let names: Vec<String> = {
+            let r = running_hidden.lock().unwrap();
+            let hidden_set = hidden_hidden.lock().unwrap();
+            r.iter()
+                .filter(|(n, h)| !h.is_finished() && hidden_set.contains(*n))
                 .map(|(n, _)| n.clone())
                 .collect()
         };

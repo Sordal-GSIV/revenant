@@ -181,12 +181,16 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     let respond_sink = engine.respond_sink.clone();
     let respond_log = engine.respond_log.clone();
     let thread_names_echo = engine.thread_names.clone();
+    let no_echo_echo = engine.no_echo.clone();
     globals.set("echo", lua.create_function(move |lua, msg: String| {
         let thread = lua.current_thread();
         let ptr = thread.to_pointer() as usize;
         let script_name: String = thread_names_echo.lock().unwrap()
             .get(&ptr).cloned()
             .unwrap_or_else(|| lua.globals().get("_REVENANT_SCRIPT").unwrap_or_else(|_| "unknown".to_string()));
+        if no_echo_echo.lock().unwrap().contains(&script_name) {
+            return Ok(());
+        }
         let text = format!("[{script_name}]: {msg}");
         {
             let mut log = respond_log.lock().unwrap();
@@ -274,6 +278,58 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         if let Some(tx) = map.get(&name) {
             let _ = tx.send(msg); // silently drop if target script exited
         }
+        Ok(())
+    })?)?;
+
+    // hide_me() / silence_me() — toggle current script in hidden set
+    let hidden_hm = engine.hidden.clone();
+    let thread_names_hm = engine.thread_names.clone();
+    let hide_me_fn = lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = thread_names_hm.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("hide_me() called outside script context".into()))?;
+        let mut set = hidden_hm.lock().unwrap();
+        if set.contains(&script_name) { set.remove(&script_name); } else { set.insert(script_name); }
+        Ok(())
+    })?;
+    globals.set("hide_me", hide_me_fn.clone())?;
+    globals.set("silence_me", hide_me_fn)?;
+
+    // toggle_echo() — toggle no_echo for current script
+    let no_echo_te = engine.no_echo.clone();
+    let thread_names_te = engine.thread_names.clone();
+    globals.set("toggle_echo", lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = thread_names_te.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("toggle_echo() called outside script context".into()))?;
+        let mut set = no_echo_te.lock().unwrap();
+        if set.contains(&script_name) { set.remove(&script_name); } else { set.insert(script_name); }
+        Ok(())
+    })?)?;
+
+    // echo_on() — remove current script from no_echo
+    let no_echo_on = engine.no_echo.clone();
+    let thread_names_on = engine.thread_names.clone();
+    globals.set("echo_on", lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = thread_names_on.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("echo_on() called outside script context".into()))?;
+        no_echo_on.lock().unwrap().remove(&script_name);
+        Ok(())
+    })?)?;
+
+    // echo_off() — add current script to no_echo
+    let no_echo_off = engine.no_echo.clone();
+    let thread_names_off = engine.thread_names.clone();
+    globals.set("echo_off", lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = thread_names_off.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("echo_off() called outside script context".into()))?;
+        no_echo_off.lock().unwrap().insert(script_name);
         Ok(())
     })?)?;
 

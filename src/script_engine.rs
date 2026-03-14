@@ -45,6 +45,10 @@ pub struct ScriptEngine {
     pub no_kill_all: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Scripts protected from pause_all.
     pub no_pause_all: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// Scripts hidden from Script.list().
+    pub hidden: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// Scripts with echo() suppressed.
+    pub no_echo: Arc<Mutex<std::collections::HashSet<String>>>,
     pub infomon: Arc<Mutex<Option<crate::infomon::Infomon>>>,
     pub spell_list: Arc<RwLock<Option<Arc<crate::spell_data::SpellList>>>>,
     pub type_data: Arc<RwLock<Option<Arc<crate::type_data::TypeData>>>>,
@@ -81,6 +85,8 @@ impl ScriptEngine {
             at_exit_hooks: Arc::new(Mutex::new(HashMap::new())),
             no_kill_all: Arc::new(Mutex::new(std::collections::HashSet::new())),
             no_pause_all: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            hidden: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            no_echo: Arc::new(Mutex::new(std::collections::HashSet::new())),
             infomon: Arc::new(Mutex::new(None)),
             spell_list: Arc::new(RwLock::new(None)),
             type_data: Arc::new(RwLock::new(None)),
