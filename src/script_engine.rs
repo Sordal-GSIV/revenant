@@ -176,7 +176,25 @@ impl ScriptEngine {
     /// Launch a named script from a file path as a tokio task.
     /// `args` follows Lich5 convention: args[0] = full arg string, args[1..] = individual tokens.
     pub fn start_script(&self, name: &str, path: &str, args: Vec<String>) -> Result<()> {
-        let code = std::fs::read_to_string(path)?;
+        let raw_code = std::fs::read_to_string(path)?;
+
+        // If this is a package script, wrap code with scoped package.path
+        let code = if path.ends_with("/init.lua") {
+            if let Some(pkg_dir) = std::path::Path::new(path).parent() {
+                let pkg_dir_str = pkg_dir.to_string_lossy();
+                let scripts_dir = self.scripts_dir.lock().unwrap().clone();
+                let wrapper = format!(
+                    "do\nlocal _saved_path = package.path\npackage.path = \"{}/?.lua;{}/?.lua;\" .. package.path\nlocal _ok, _err = pcall(function()\n",
+                    pkg_dir_str, scripts_dir
+                );
+                wrapper + &raw_code + "\nend)\npackage.path = _saved_path\nif not _ok then error(_err) end\nend"
+            } else {
+                raw_code
+            }
+        } else {
+            raw_code
+        };
+
         let lua = self.lua.clone();
         let script_name = name.to_string();
 

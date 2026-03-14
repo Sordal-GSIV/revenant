@@ -61,10 +61,21 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         let error_hook2 = error_hook2.clone();
         async move {
             let dir = scripts_dir2.lock().unwrap().clone();
-            let path = format!("{dir}/{name}.lua");
-            if !std::path::Path::new(&path).exists() {
-                return Err(mlua::Error::RuntimeError(format!("Script not found: {name}")));
-            }
+
+            // Two-step lookup: directory package first, then single file
+            let pkg_init = format!("{dir}/{name}/init.lua");
+            let single_file = format!("{dir}/{name}.lua");
+
+            let path = if std::path::Path::new(&pkg_init).exists() {
+                pkg_init
+            } else if std::path::Path::new(&single_file).exists() {
+                single_file
+            } else {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "script not found: {name} (checked {name}/init.lua and {name}.lua)"
+                )));
+            };
+
             let args_string = args_str.unwrap_or_default();
             let mut args = if args_string.is_empty() { vec![] } else { vec![args_string.clone()] };
             args.extend(args_string.split_whitespace().map(|s| s.to_string()));
@@ -72,8 +83,24 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             // Store args
             script_args2.lock().unwrap().insert(name.clone(), args.clone());
 
-            let code = std::fs::read_to_string(&path)
+            let raw_code = std::fs::read_to_string(&path)
                 .map_err(|e| mlua::Error::RuntimeError(e.to_string()))?;
+
+            // If this is a package script, wrap code with scoped package.path
+            let code = if path.ends_with("/init.lua") {
+                if let Some(pkg_dir) = std::path::Path::new(&path).parent() {
+                    let pkg_dir_str = pkg_dir.to_string_lossy();
+                    let wrapper = format!(
+                        "do\nlocal _saved_path = package.path\npackage.path = \"{}/?.lua;{}/?.lua;\" .. package.path\nlocal _ok, _err = pcall(function()\n",
+                        pkg_dir_str, dir
+                    );
+                    wrapper + &raw_code + "\nend)\npackage.path = _saved_path\nif not _ok then error(_err) end\nend"
+                } else {
+                    raw_code
+                }
+            } else {
+                raw_code
+            };
 
             // Set globals before launch
             {
