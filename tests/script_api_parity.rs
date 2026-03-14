@@ -2,6 +2,60 @@ use revenant::script_engine::ScriptEngine;
 use std::sync::{Arc, Mutex, RwLock};
 
 #[tokio::test]
+async fn test_full_api_loads_without_error() {
+    use revenant::game_state::GameState;
+    let gs = Arc::new(std::sync::RwLock::new(GameState::default()));
+    let engine = ScriptEngine::new();
+    engine.set_game_state(gs);
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx);
+    engine.install_lua_api().unwrap();
+
+    // Verify all functions exist as globals
+    engine.eval_lua(r#"
+        assert(type(get) == "function", "get missing")
+        assert(type(get_noblock) == "function", "get_noblock missing")
+        assert(type(nget) == "function", "nget missing")
+        assert(type(echo) == "function", "echo missing")
+        assert(type(reget) == "function", "reget missing")
+        assert(type(clear) == "function", "clear missing")
+        assert(type(wait) == "function", "wait missing")
+        assert(type(waitforre) == "function", "waitforre missing")
+        assert(type(matchwait) == "function", "matchwait missing")
+        assert(type(matchtimeout) == "function", "matchtimeout missing")
+        assert(type(matchfind) == "function", "matchfind missing")
+        assert(type(fput) == "function", "fput missing")
+        assert(type(_raw_fput) == "function", "_raw_fput missing")
+        assert(type(multifput) == "function", "multifput missing")
+        assert(type(waitrt) == "function", "waitrt missing")
+        assert(type(waitcastrt) == "function", "waitcastrt missing")
+        assert(type(checkrt) == "function", "checkrt missing")
+        assert(type(checkcastrt) == "function", "checkcastrt missing")
+        assert(type(wait_until) == "function", "wait_until missing")
+        assert(type(wait_while) == "function", "wait_while missing")
+        assert(type(move) == "function", "move missing")
+        assert(type(n) == "function", "n missing")
+        assert(type(s) == "function", "s missing")
+        assert(type(e) == "function", "e missing")
+        assert(type(w) == "function", "w missing")
+        assert(type(before_dying) == "function", "before_dying missing")
+        assert(type(undo_before_dying) == "function", "undo_before_dying missing")
+        assert(type(no_kill_all) == "function", "no_kill_all missing")
+        assert(type(no_pause_all) == "function", "no_pause_all missing")
+        assert(type(die_with_me) == "function", "die_with_me missing")
+        assert(type(running) == "function", "running missing")
+        assert(type(send_to_script) == "function", "send_to_script missing")
+        assert(type(health) == "function", "health missing")
+        assert(type(mana) == "function", "mana missing")
+        assert(type(stunned) == "function", "stunned missing")
+        assert(type(room_name) == "function", "room_name missing")
+        assert(type(Script.exists) == "function", "Script.exists missing")
+        assert(type(Script.at_exit) == "function", "Script.at_exit missing")
+        assert(type(Script.clear_exit_procs) == "function", "Script.clear_exit_procs missing")
+    "#).await.unwrap();
+}
+
+#[tokio::test]
 async fn test_before_dying_runs_on_normal_exit() {
     let responded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let engine = ScriptEngine::new();
