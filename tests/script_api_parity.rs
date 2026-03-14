@@ -2,6 +2,67 @@ use revenant::script_engine::ScriptEngine;
 use std::sync::{Arc, Mutex, RwLock};
 
 #[tokio::test]
+async fn test_before_dying_runs_on_normal_exit() {
+    let responded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let engine = ScriptEngine::new();
+    let cap = responded.clone();
+    engine.set_respond_sink(move |msg| { cap.lock().unwrap().push(msg); });
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"
+        before_dying(function()
+            respond("cleanup ran")
+        end)
+        -- script exits normally
+    "#).unwrap();
+
+    engine.start_script("bdtest", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    let msgs = responded.lock().unwrap();
+    assert!(msgs.iter().any(|m| m.contains("cleanup ran")),
+        "before_dying callback should have run, got: {:?}", *msgs);
+}
+
+#[tokio::test]
+async fn test_undo_before_dying_clears_hooks() {
+    let responded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let engine = ScriptEngine::new();
+    let cap = responded.clone();
+    engine.set_respond_sink(move |msg| { cap.lock().unwrap().push(msg); });
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"
+        before_dying(function()
+            respond("should not run")
+        end)
+        undo_before_dying()
+        -- script exits normally, no hooks should fire
+    "#).unwrap();
+
+    engine.start_script("ubdtest", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    let msgs = responded.lock().unwrap();
+    assert!(!msgs.iter().any(|m| m.contains("should not run")),
+        "undo_before_dying should have cleared hooks");
+}
+
+#[tokio::test]
 async fn test_checkrt_returns_zero_when_no_roundtime() {
     use revenant::game_state::GameState;
     let gs = Arc::new(RwLock::new(GameState::default()));
@@ -510,3 +571,4 @@ async fn test_script_exists_finds_lua_file() {
         assert(Script.exists("nonexistent") == false, "nonexistent should not exist")
     "#).await.unwrap();
 }
+

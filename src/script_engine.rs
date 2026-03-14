@@ -39,6 +39,8 @@ pub struct ScriptEngine {
     pub script_lines_tx: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
     /// Per-script line buffer receivers. Key = script name.
     pub script_lines_rx: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<String>>>>>>,
+    /// Per-script at-exit callback registry keys (Lua registry references). LIFO order.
+    pub at_exit_hooks: Arc<Mutex<HashMap<String, Vec<mlua::RegistryKey>>>>,
 }
 
 impl ScriptEngine {
@@ -66,6 +68,7 @@ impl ScriptEngine {
             thread_names: Arc::new(Mutex::new(HashMap::new())),
             script_lines_tx: Arc::new(Mutex::new(HashMap::new())),
             script_lines_rx: Arc::new(Mutex::new(HashMap::new())),
+            at_exit_hooks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -281,6 +284,7 @@ impl ScriptEngine {
         let thread_names = self.thread_names.clone();
         let script_lines_tx_clone = self.script_lines_tx.clone();
         let script_lines_rx_clone = self.script_lines_rx.clone();
+        let at_exit_hooks_clone = self.at_exit_hooks.clone();
         let handle = tokio::spawn(async move {
             let result: LuaResult<()> = async {
                 let func: LuaFunction = lua.load(&code).set_name(&script_name).into_function()?;
@@ -293,6 +297,18 @@ impl ScriptEngine {
                 r?;
                 Ok(())
             }.await;
+            // Run at-exit hooks (LIFO) — runs on both success and error
+            let hooks = at_exit_hooks_clone.lock().unwrap().remove(&script_name);
+            if let Some(hook_keys) = hooks {
+                for key in hook_keys.into_iter().rev() {
+                    if let Ok(func) = lua.registry_value::<LuaFunction>(&key) {
+                        if let Err(e) = func.call_async::<()>(()).await {
+                            tracing::warn!("[script:{script_name}] at_exit hook error: {e}");
+                        }
+                    }
+                    let _ = lua.remove_registry_value(key);
+                }
+            }
             if let Err(e) = result {
                 let msg = e.to_string();
                 tracing::error!("[script:{script_name}] error: {msg}");

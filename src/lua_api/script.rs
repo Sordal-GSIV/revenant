@@ -66,6 +66,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     let downstream_tx_run = engine.downstream_tx.clone();
     let script_lines_tx_run = engine.script_lines_tx.clone();
     let script_lines_rx_run = engine.script_lines_rx.clone();
+    let at_exit_hooks_run = engine.at_exit_hooks.clone();
     t.set("run", lua.create_async_function(move |_, (name, args_str): (String, Option<String>)| {
         let running2 = running2.clone();
         let script_args2 = script_args2.clone();
@@ -76,6 +77,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         let downstream_tx_run = downstream_tx_run.clone();
         let script_lines_tx_run = script_lines_tx_run.clone();
         let script_lines_rx_run = script_lines_rx_run.clone();
+        let at_exit_hooks_run = at_exit_hooks_run.clone();
         async move {
             let dir = scripts_dir2.lock().unwrap().clone();
 
@@ -174,6 +176,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             let thread_names = thread_names_run.clone();
             let script_lines_tx_clone = script_lines_tx_run.clone();
             let script_lines_rx_clone = script_lines_rx_run.clone();
+            let at_exit_hooks_clone = at_exit_hooks_run.clone();
             let handle = tokio::spawn(async move {
                 let result: LuaResult<()> = async {
                     let func: LuaFunction = lua_clone.load(&code).set_name(&script_name).into_function()?;
@@ -186,6 +189,18 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     r?;
                     Ok(())
                 }.await;
+                // Run at-exit hooks (LIFO) — runs on both success and error
+                let hooks = at_exit_hooks_clone.lock().unwrap().remove(&script_name);
+                if let Some(hook_keys) = hooks {
+                    for key in hook_keys.into_iter().rev() {
+                        if let Ok(func) = lua_clone.registry_value::<LuaFunction>(&key) {
+                            if let Err(e) = func.call_async::<()>(()).await {
+                                tracing::warn!("[script:{script_name}] at_exit hook error: {e}");
+                            }
+                        }
+                        let _ = lua_clone.remove_registry_value(key);
+                    }
+                }
                 if let Err(e) = result {
                     let msg = e.to_string();
                     tracing::error!("[script:{script_name}] error: {msg}");
@@ -213,6 +228,40 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         let pkg_init = format!("{dir}/{name}/init.lua");
         let single_file = format!("{dir}/{name}.lua");
         Ok(std::path::Path::new(&pkg_init).exists() || std::path::Path::new(&single_file).exists())
+    })?)?;
+
+    let globals = lua.globals();
+
+    // Script.at_exit — alias for before_dying (set on t after globals registration below)
+    // Script.clear_exit_procs — alias for undo_before_dying
+
+    // before_dying(func) — register at-exit callback for current script
+    let at_exit_bd = engine.at_exit_hooks.clone();
+    let thread_names_bd = engine.thread_names.clone();
+    globals.set("before_dying", lua.create_function(move |lua, func: LuaFunction| {
+        let thread = lua.current_thread();
+        let ptr = thread.to_pointer() as usize;
+        let script_name: String = thread_names_bd.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("before_dying() called outside script context".into()))?;
+        let key = lua.create_registry_value(func)?;
+        at_exit_bd.lock().unwrap().entry(script_name).or_default().push(key);
+        Ok(())
+    })?)?;
+
+    // Script.at_exit — alias for before_dying (set after t is fully built, below)
+
+    // undo_before_dying() — clear all at-exit hooks for current script
+    let at_exit_ubd = engine.at_exit_hooks.clone();
+    let thread_names_ubd = engine.thread_names.clone();
+    globals.set("undo_before_dying", lua.create_function(move |lua, ()| {
+        let thread = lua.current_thread();
+        let ptr = thread.to_pointer() as usize;
+        let script_name: String = thread_names_ubd.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("undo_before_dying() called outside script context".into()))?;
+        at_exit_ubd.lock().unwrap().remove(&script_name);
+        Ok(())
     })?)?;
 
     // Build a metatable for the Script table so that Script.vars and Script.name
@@ -245,6 +294,14 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
     t.set_metatable(Some(mt));
+
+    // Script.at_exit = before_dying alias
+    let before_dying_fn: LuaFunction = lua.globals().get("before_dying")?;
+    t.set("at_exit", before_dying_fn)?;
+
+    // Script.clear_exit_procs = undo_before_dying alias
+    let undo_fn: LuaFunction = lua.globals().get("undo_before_dying")?;
+    t.set("clear_exit_procs", undo_fn)?;
 
     lua.globals().set("Script", t)?;
     Ok(())
