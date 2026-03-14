@@ -196,4 +196,66 @@ mod tests {
             panic!("expected Table");
         }
     }
+
+    // ── MapView ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_gui_map_view_creates_widget() {
+        let engine = make_engine();
+        engine.eval_lua(r#"
+            local m = Gui.map_view({ width=600, height=400 })
+            assert(m ~= nil)
+        "#).await.unwrap();
+        assert_eq!(engine.gui_state.lock().unwrap().widgets.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_gui_map_view_set_marker_and_clear() {
+        let engine = make_engine();
+        engine.eval_lua(r#"
+            local m = Gui.map_view({})
+            m:set_marker(1234, { color="red", shape="circle" })
+            m:clear_markers()
+        "#).await.unwrap();
+        let state = engine.gui_state.lock().unwrap();
+        let data = state.widgets.values().next().unwrap();
+        if let revenant::gui::WidgetData::MapView { markers, .. } = data {
+            assert!(markers.is_empty());
+        } else {
+            panic!("expected MapView");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gui_map_view_set_scale_clamped() {
+        let engine = make_engine();
+        engine.eval_lua(r#"
+            local m = Gui.map_view({})
+            m:set_scale(10.0)  -- should clamp to 4.0
+        "#).await.unwrap();
+        let state = engine.gui_state.lock().unwrap();
+        let data = state.widgets.values().next().unwrap();
+        if let revenant::gui::WidgetData::MapView { scale, .. } = data {
+            assert!(*scale <= 4.0 + f32::EPSILON);
+        } else {
+            panic!("expected MapView");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gui_map_view_set_scroll_offset() {
+        let engine = make_engine();
+        engine.eval_lua(r#"
+            local m = Gui.map_view({})
+            m:set_scroll_offset(100.0, 200.0)
+        "#).await.unwrap();
+        let state = engine.gui_state.lock().unwrap();
+        let data = state.widgets.values().next().unwrap();
+        if let revenant::gui::WidgetData::MapView { scroll_offset, .. } = data {
+            assert!((scroll_offset.0 - 100.0).abs() < 0.1);
+            assert!((scroll_offset.1 - 200.0).abs() < 0.1);
+        } else {
+            panic!("expected MapView");
+        }
+    }
 }

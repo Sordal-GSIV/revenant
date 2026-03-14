@@ -446,14 +446,168 @@ fn add_on_click(lua: &mlua::Lua, t: &LuaTable, id: WidgetId, cbs: Arc<Mutex<GuiC
 }
 
 // ── MapView constructor (Task 3) ──────────────────────────────────────────────
-// Placeholder — populated in Task 3.
+
 fn register_map_view_ctor(
-    _lua: &mlua::Lua,
-    _gui: &LuaTable,
-    _gs: Arc<Mutex<GuiState>>,
-    _cbs: Arc<Mutex<GuiCallbacks>>,
+    lua: &mlua::Lua,
+    gui: &LuaTable,
+    gs: Arc<Mutex<GuiState>>,
+    cbs: Arc<Mutex<GuiCallbacks>>,
 ) -> LuaResult<()> {
+    let gs2 = gs.clone();
+    let cbs2 = cbs.clone();
+    gui.set("map_view", lua.create_function(move |lua, opts: LuaTable| {
+        let _width:  f32 = opts.get("width").unwrap_or(600.0);
+        let _height: f32 = opts.get("height").unwrap_or(400.0);
+
+        let id = next_widget_id();
+        gs2.lock().unwrap().widgets.insert(id, WidgetData::MapView {
+            image_path:    None,
+            markers:       Vec::new(),
+            scale:         1.0,
+            scroll_offset: (0.0, 0.0),
+        });
+
+        let t = make_base_widget(lua, id, gs2.clone())?;
+
+        // load_image(path) → (ok, err)
+        {
+            let gs3 = gs2.clone();
+            t.set("load_image", lua.create_async_function(move |lua, path: String| {
+                let gs4 = gs3.clone();
+                async move {
+                    if path.contains("..") {
+                        return Ok(LuaMultiValue::from_vec(vec![
+                            LuaValue::Nil,
+                            LuaValue::String(lua.create_string("path traversal not allowed")?),
+                        ]));
+                    }
+                    match tokio::fs::read(&path).await {
+                        Err(e) => Ok(LuaMultiValue::from_vec(vec![
+                            LuaValue::Nil,
+                            LuaValue::String(lua.create_string(&e.to_string())?),
+                        ])),
+                        Ok(bytes) => {
+                            match image::load_from_memory(&bytes) {
+                                Err(e) => Ok(LuaMultiValue::from_vec(vec![
+                                    LuaValue::Nil,
+                                    LuaValue::String(lua.create_string(&e.to_string())?),
+                                ])),
+                                Ok(img) => {
+                                    let rgba = img.to_rgba8();
+                                    let (w, h) = rgba.dimensions();
+                                    let pixels: Vec<eframe::egui::Color32> = rgba.pixels()
+                                        .map(|p| eframe::egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
+                                        .collect();
+                                    let color_image = eframe::egui::ColorImage { size: [w as usize, h as usize], pixels };
+                                    {
+                                        let mut s = gs4.lock().unwrap();
+                                        if let Some(WidgetData::MapView { image_path, .. }) = s.widgets.get_mut(&id) {
+                                            *image_path = Some(path.clone());
+                                        }
+                                        s.pending_textures.push((path, color_image));
+                                        s.dirty = true;
+                                    }
+                                    Ok(LuaMultiValue::from_vec(vec![LuaValue::Boolean(true), LuaValue::Nil]))
+                                }
+                            }
+                        }
+                    }
+                }
+            })?)?;
+        }
+
+        // set_marker(room_id, opts)
+        {
+            let gs3 = gs2.clone();
+            t.set("set_marker", lua.create_function(move |_, (_self, room_id, opts): (LuaValue, u32, LuaTable)| {
+                let color_str: String = opts.get("color").unwrap_or_else(|_| "white".to_string());
+                let shape_str: String = opts.get("shape").unwrap_or_else(|_| "circle".to_string());
+                let color = parse_color(&color_str);
+                let shape = if shape_str == "x" { MarkerShape::X } else { MarkerShape::Circle };
+
+                // room pixel position: real lookup requires map_data (post-implementation note).
+                // Without map data loaded, silently skip.
+                let position: Option<(f32, f32)> = None;
+                let Some(position) = position else { return Ok(()); };
+
+                let marker = Marker { room_id, color, shape, position };
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::MapView { markers, .. }) = s.widgets.get_mut(&id) {
+                    if let Some(m) = markers.iter_mut().find(|m| m.room_id == room_id) {
+                        *m = marker;
+                    } else {
+                        markers.push(marker);
+                    }
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+        }
+
+        // clear_markers()
+        {
+            let gs3 = gs2.clone();
+            t.set("clear_markers", lua.create_function(move |_, _self: LuaValue| {
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::MapView { markers, .. }) = s.widgets.get_mut(&id) {
+                    markers.clear();
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+        }
+
+        // set_scale(factor) — clamped to [0.25, 4.0]
+        {
+            let gs3 = gs2.clone();
+            t.set("set_scale", lua.create_function(move |_, (_self, factor): (LuaValue, f32)| {
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::MapView { scale, .. }) = s.widgets.get_mut(&id) {
+                    *scale = factor.clamp(0.25, 4.0);
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+        }
+
+        // set_scroll_offset(x, y)
+        {
+            let gs3 = gs2.clone();
+            t.set("set_scroll_offset", lua.create_function(move |_, (_self, x, y): (LuaValue, f32, f32)| {
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::MapView { scroll_offset, .. }) = s.widgets.get_mut(&id) {
+                    *scroll_offset = (x, y);
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+        }
+
+        // center_on(room_id) — no-op until map data available (Task 6 follow-up)
+        {
+            t.set("center_on", lua.create_function(move |_, (_self, _room_id): (LuaValue, u32)| {
+                Ok(())
+            })?)?;
+        }
+
+        // on_click(callback)
+        add_on_click(lua, &t, id, cbs2.clone())?;
+
+        Ok(t)
+    })?)?;
     Ok(())
+}
+
+fn parse_color(s: &str) -> [f32; 4] {
+    match s {
+        "red"    => [1.0, 0.0, 0.0, 1.0],
+        "green"  => [0.0, 1.0, 0.0, 1.0],
+        "blue"   => [0.0, 0.0, 1.0, 1.0],
+        "yellow" => [1.0, 1.0, 0.0, 1.0],
+        "white"  => [1.0, 1.0, 1.0, 1.0],
+        "black"  => [0.0, 0.0, 0.0, 1.0],
+        _        => [1.0, 1.0, 1.0, 1.0],
+    }
 }
 
 // ── Gui.wait() (Task 5) ───────────────────────────────────────────────────────
