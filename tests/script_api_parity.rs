@@ -2,6 +2,54 @@ use revenant::script_engine::ScriptEngine;
 use std::sync::{Arc, Mutex, RwLock};
 
 #[tokio::test]
+async fn test_checkrt_returns_zero_when_no_roundtime() {
+    use revenant::game_state::GameState;
+    let gs = Arc::new(RwLock::new(GameState::default()));
+    let engine = ScriptEngine::new();
+    engine.set_game_state(gs);
+    engine.install_lua_api().unwrap();
+
+    engine.eval_lua(r#"
+        local rt = checkrt()
+        assert(rt == 0, "expected 0, got: " .. rt)
+    "#).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_wait_until_returns_when_condition_met() {
+    let engine = ScriptEngine::new();
+    engine.install_lua_api().unwrap();
+
+    let start = tokio::time::Instant::now();
+    engine.eval_lua(r#"
+        local counter = 0
+        local result = wait_until(function()
+            counter = counter + 1
+            return counter >= 3
+        end, 0.05)
+        assert(result == true, "wait_until should return truthy value")
+    "#).await.unwrap();
+    let elapsed = start.elapsed();
+    assert!(elapsed >= tokio::time::Duration::from_millis(80),
+        "should have polled at least twice at 0.05s interval");
+}
+
+#[tokio::test]
+async fn test_wait_while_returns_when_condition_false() {
+    let engine = ScriptEngine::new();
+    engine.install_lua_api().unwrap();
+
+    engine.eval_lua(r#"
+        local counter = 3
+        wait_while(function()
+            counter = counter - 1
+            return counter > 0
+        end, 0.05)
+        assert(counter == 0, "wait_while should loop until condition is false")
+    "#).await.unwrap();
+}
+
+#[tokio::test]
 async fn test_get_receives_downstream_line() {
     let engine = ScriptEngine::new();
     let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);

@@ -49,6 +49,31 @@ function matchtimeout(timeout, ...)
     return nil
 end
 
+function checkrt()
+    return math.max(0, GameState.roundtime())
+end
+
+function checkcastrt()
+    return math.max(0, GameState.cast_roundtime())
+end
+
+function wait_until(func, interval)
+    interval = interval or 0.1
+    while true do
+        local result = func()
+        if result then return result end
+        pause(interval)
+    end
+end
+
+function wait_while(func, interval)
+    interval = interval or 0.1
+    while true do
+        if not func() then return end
+        pause(interval)
+    end
+end
+
 function waitforre(pattern, timeout)
     local deadline = timeout and (os.time() + timeout) or nil
     while true do
