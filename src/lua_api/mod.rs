@@ -39,5 +39,8 @@ fn register_lua_builtins(engine: &ScriptEngine) -> Result<()> {
     let builtins_src = include_str!("builtins.lua");
     engine.lua.load(builtins_src).set_name("builtins").exec()
         .map_err(|e| anyhow::anyhow!("builtins.lua: {e}"))?;
+    let aliases_src = include_str!("aliases.lua");
+    engine.lua.load(aliases_src).set_name("aliases").exec()
+        .map_err(|e| anyhow::anyhow!("aliases.lua: {e}"))?;
     Ok(())
 }
