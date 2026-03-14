@@ -1,4 +1,4 @@
-use revenant::game_state::{GameState, Stance, MindState, EncumbranceState};
+use revenant::game_state::{GameState, Stance, EncumbranceState};
 use revenant::script_engine::ScriptEngine;
 use std::sync::{Arc, RwLock};
 
