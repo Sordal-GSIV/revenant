@@ -177,8 +177,11 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let spell_path = if std::path::Path::new("data/effect-list.xml").exists() {
             "data/effect-list.xml".to_string()
         } else {
-            format!("{}/data/effect-list.xml",
-                std::env::current_dir().unwrap_or_default().display())
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_default();
+            exe_dir.join("data/effect-list.xml").to_string_lossy().into_owned()
         };
         match crate::spell_data::SpellList::load(&spell_path) {
             Ok(sl) => {
@@ -192,8 +195,11 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let type_path = if std::path::Path::new("data/gameobj-data.xml").exists() {
             "data/gameobj-data.xml".to_string()
         } else {
-            format!("{}/data/gameobj-data.xml",
-                std::env::current_dir().unwrap_or_default().display())
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_default();
+            exe_dir.join("data/gameobj-data.xml").to_string_lossy().into_owned()
         };
         match crate::type_data::TypeData::load(&type_path) {
             Ok(td) => {
