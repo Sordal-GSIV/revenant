@@ -107,6 +107,42 @@ async fn test_reget_returns_recent_lines() {
 }
 
 #[tokio::test]
+async fn test_clear_drains_line_buffer() {
+    let engine = ScriptEngine::new();
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"
+        pause(0.1)  -- let lines buffer
+        local drained = clear()
+        assert(type(drained) == "table", "clear should return table")
+        assert(#drained >= 2, "expected at least 2 drained lines, got: " .. #drained)
+        -- After clear, get_noblock should return nil
+        local next = get_noblock()
+        assert(next == nil, "buffer should be empty after clear")
+    "#).unwrap();
+
+    engine.start_script("cleartest", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+
+    // Send lines before the script's pause(0.1) expires
+    tx.send(Arc::new(b"line A\n".to_vec())).unwrap();
+    tx.send(Arc::new(b"line B\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "script errors: {:?}", *errs);
+}
+
+#[tokio::test]
 async fn test_per_thread_identity_survives_yield() {
     let engine = ScriptEngine::new();
     engine.install_lua_api().unwrap();

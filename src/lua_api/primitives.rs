@@ -189,6 +189,31 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     globals.set("get_noblock", get_noblock_fn.clone())?;
     globals.set("nget", get_noblock_fn)?;
 
+    // clear() — drain the script's line buffer, return all pending lines
+    let script_lines_rx3 = engine.script_lines_rx.clone();
+    let thread_names_clear = engine.thread_names.clone();
+    globals.set("clear", lua.create_function(move |lua, ()| {
+        let thread = lua.current_thread();
+        let ptr = thread.to_pointer() as usize;
+        let script_name: String = thread_names_clear.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("clear() called outside script context".into()))?;
+        let rx = {
+            let map = script_lines_rx3.lock().unwrap();
+            map.get(&script_name).cloned()
+                .ok_or_else(|| LuaError::RuntimeError(format!("no line buffer for script {script_name}")))?
+        };
+        let table = lua.create_table()?;
+        let mut i = 1;
+        if let Ok(mut guard) = rx.try_lock() {
+            while let Ok(line) = guard.try_recv() {
+                table.set(i, line.as_str())?;
+                i += 1;
+            }
+        }
+        Ok(table)
+    })?)?;
+
     // reget(n) — return last N lines from game_log
     let game_log = engine.game_log.clone();
     globals.set("reget", lua.create_function(move |lua, n: usize| {
