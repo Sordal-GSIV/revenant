@@ -240,6 +240,63 @@ async fn test_waitforre_timeout_returns_nil() {
 }
 
 #[tokio::test]
+async fn test_matchwait_returns_matching_line() {
+    let engine = ScriptEngine::new();
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"
+        local line = matchwait("goblin", "troll")
+        assert(string.find(line, "troll"), "expected troll match, got: " .. line)
+    "#).unwrap();
+
+    engine.start_script("mw", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    tx.send(Arc::new(b"The wind howls.\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    tx.send(Arc::new(b"A troll appears!\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "script errors: {:?}", *errs);
+}
+
+#[tokio::test]
+async fn test_matchtimeout_returns_nil_on_timeout() {
+    let engine = ScriptEngine::new();
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"
+        local line = matchtimeout(2, "never", "matches")
+        assert(line == nil, "expected nil on timeout")
+    "#).unwrap();
+
+    engine.start_script("mt", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(2500)).await;
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "script errors: {:?}", *errs);
+}
+
+#[tokio::test]
 async fn test_per_thread_identity_survives_yield() {
     let engine = ScriptEngine::new();
     engine.install_lua_api().unwrap();

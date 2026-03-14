@@ -6,6 +6,36 @@ function wait()
     return get()
 end
 
+function matchwait(...)
+    local patterns = {...}
+    while true do
+        local line = get()
+        for _, pattern in ipairs(patterns) do
+            if string.find(line, pattern) then
+                return line
+            end
+        end
+    end
+end
+
+function matchtimeout(timeout, ...)
+    local patterns = {...}
+    local deadline = os.time() + timeout
+    while os.time() < deadline do
+        local line = get_noblock()
+        if line then
+            for _, pattern in ipairs(patterns) do
+                if string.find(line, pattern) then
+                    return line
+                end
+            end
+        else
+            pause(0.1)
+        end
+    end
+    return nil
+end
+
 function waitforre(pattern, timeout)
     local deadline = timeout and (os.time() + timeout) or nil
     while true do
