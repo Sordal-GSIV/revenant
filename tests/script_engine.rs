@@ -177,3 +177,31 @@ async fn test_script_kill_from_lua() {
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     assert!(!engine.is_running("lua_kill_test"));
 }
+
+#[tokio::test]
+async fn test_script_running_returns_false_when_not_running() {
+    let engine = ScriptEngine::new();
+    engine.install_lua_api().unwrap();
+    engine.eval_lua(r#"
+        assert(Script.running("nonexistent") == false, "not running script should return false")
+    "#).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_script_running_returns_true_when_running() {
+    use tempfile::TempDir;
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("daemon.lua"), b"pause(9999)").unwrap();
+
+    let engine = ScriptEngine::new();
+    engine.set_scripts_dir(tmp.path().to_str().unwrap());
+    engine.install_lua_api().unwrap();
+    engine.set_script_error_hook(|name, err| panic!("{name}: {err}"));
+
+    engine.eval_lua(r#"Script.run("daemon")"#).await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    engine.eval_lua(r#"
+        assert(Script.running("daemon") == true, "daemon should be running")
+    "#).await.unwrap();
+}

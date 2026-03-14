@@ -47,6 +47,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Ok(out)
     })?)?;
 
+    // Script.running(name) → bool — true if the script is running and not finished
+    let running = engine.running.clone();
+    t.set("running", lua.create_function(move |_, name: String| {
+        Ok(running.lock().unwrap()
+            .get(&name)
+            .map(|h| !h.is_finished())
+            .unwrap_or(false))
+    })?)?;
+
     // Script.run(name [, args_string]) — launch a script by name from the scripts directory
     let running2 = engine.running.clone();
     let script_args2 = engine.script_args.clone();
