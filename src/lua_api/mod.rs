@@ -1,6 +1,7 @@
 pub mod game_state;
 pub mod game_obj;
 pub mod hooks;
+pub mod json;
 pub mod map;
 pub mod primitives;
 pub mod script;
@@ -17,5 +18,6 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     game_obj::register(engine).map_err(|e| anyhow::anyhow!("game_obj register: {e}"))?;
     script::register(engine)?;
     settings::register(engine)?;
+    json::register(engine).map_err(|e| anyhow::anyhow!("json register: {e}"))?;
     Ok(())
 }
