@@ -23,9 +23,11 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
 
     // All other fields via __index
     let gs = gs_arc.clone();
+    let infomon = engine.infomon.clone();
     let mt = lua.create_table()?;
     mt.set("__index", lua.create_function(move |lua, (_t, key): (LuaTable, String)| {
         let gs = gs.read().unwrap();
+        let inf_guard = infomon.lock().unwrap();
         match key.as_str() {
             "name"       => Ok(LuaValue::String(lua.create_string(&gs.name)?)),
             "health"     => Ok(LuaValue::Integer(gs.health as i64)),
@@ -68,6 +70,18 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             "prone"      => Ok(LuaValue::Boolean(gs.prone)),
             "sitting"    => Ok(LuaValue::Boolean(gs.sitting)),
             "kneeling"   => Ok(LuaValue::Boolean(gs.kneeling)),
+            "citizenship" => {
+                match inf_guard.as_ref().and_then(|im| im.get("citizenship")) {
+                    Some(v) => Ok(LuaValue::String(lua.create_string(v)?)),
+                    None => Ok(LuaValue::Nil),
+                }
+            }
+            "che" => {
+                match inf_guard.as_ref().and_then(|im| im.get("che")) {
+                    Some(v) => Ok(LuaValue::String(lua.create_string(v)?)),
+                    None => Ok(LuaValue::Nil),
+                }
+            }
             _ => Ok(LuaValue::Nil),
         }
     })?)?;

@@ -385,6 +385,8 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                     };
 
                     if let Some(fwd) = forwarded {
+                        *engine_up.last_upstream_time.lock().unwrap() = std::time::Instant::now();
+
                         // Broadcast upstream line to listening scripts
                         let _ = upstream_broadcast_up.send(fwd.trim_end().as_bytes().to_vec());
 

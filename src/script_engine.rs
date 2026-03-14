@@ -68,6 +68,8 @@ pub struct ScriptEngine {
     pub type_data: Arc<RwLock<Option<Arc<crate::type_data::TypeData>>>>,
     /// Spell.after_stance — stance to return to after casting.
     pub after_stance: Arc<Mutex<Option<String>>>,
+    /// Timestamp of the last upstream (player input) byte forwarded to the server.
+    pub last_upstream_time: Arc<Mutex<std::time::Instant>>,
     /// Shared GUI state — populated by register_gui(), read by MonitorApp renderer.
     #[cfg(feature = "monitor")]
     pub gui_state: std::sync::Arc<std::sync::Mutex<crate::gui::GuiState>>,
@@ -114,6 +116,7 @@ impl ScriptEngine {
             spell_list: Arc::new(RwLock::new(None)),
             type_data: Arc::new(RwLock::new(None)),
             after_stance: Arc::new(Mutex::new(None)),
+            last_upstream_time: Arc::new(Mutex::new(std::time::Instant::now())),
             #[cfg(feature = "monitor")]
             gui_state: std::sync::Arc::new(std::sync::Mutex::new(crate::gui::GuiState::default())),
         }

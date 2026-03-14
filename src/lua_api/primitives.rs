@@ -616,6 +616,14 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         result
     })?)?;
 
+    // idle_p([secs]) — returns true if no upstream command has been forwarded for >= secs (default 60)
+    let last_up = engine.last_upstream_time.clone();
+    globals.set("idle_p", lua.create_function(move |_, secs: Option<f64>| {
+        let threshold = secs.unwrap_or(60.0);
+        let elapsed = last_up.lock().unwrap().elapsed().as_secs_f64();
+        Ok(elapsed >= threshold)
+    })?)?;
+
     // unique_waitfor(pattern [, timeout_secs]) — wait for pattern in unique buffer
     let uniq_rx_wf = engine.unique_lines_rx.clone();
     let thread_names_uwf = engine.thread_names.clone();
