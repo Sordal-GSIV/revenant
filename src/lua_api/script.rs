@@ -206,6 +206,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
+    // Script.exists(name) — check if a script file exists
+    let scripts_dir_exists = engine.scripts_dir.clone();
+    t.set("exists", lua.create_function(move |_, name: String| {
+        let dir = scripts_dir_exists.lock().unwrap().clone();
+        let pkg_init = format!("{dir}/{name}/init.lua");
+        let single_file = format!("{dir}/{name}.lua");
+        Ok(std::path::Path::new(&pkg_init).exists() || std::path::Path::new(&single_file).exists())
+    })?)?;
+
     // Build a metatable for the Script table so that Script.vars and Script.name
     // are computed properties (not stored values). The __index metamethod intercepts
     // field access and returns the current value from the per-thread identity map.

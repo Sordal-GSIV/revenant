@@ -491,3 +491,22 @@ async fn test_raw_fput_still_works() {
     let cmds = sent.lock().unwrap();
     assert!(cmds.iter().any(|c| c.contains("look")));
 }
+
+#[tokio::test]
+async fn test_script_exists_finds_lua_file() {
+    use tempfile::TempDir;
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("myscript.lua"), b"-- test").unwrap();
+    std::fs::create_dir(tmp.path().join("mypkg")).unwrap();
+    std::fs::write(tmp.path().join("mypkg").join("init.lua"), b"-- pkg").unwrap();
+
+    let engine = ScriptEngine::new();
+    engine.set_scripts_dir(tmp.path().to_str().unwrap());
+    engine.install_lua_api().unwrap();
+
+    engine.eval_lua(r#"
+        assert(Script.exists("myscript") == true, "myscript.lua should exist")
+        assert(Script.exists("mypkg") == true, "mypkg/init.lua should exist")
+        assert(Script.exists("nonexistent") == false, "nonexistent should not exist")
+    "#).await.unwrap();
+}
