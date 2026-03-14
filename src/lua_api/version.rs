@@ -96,6 +96,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         })?,
     )?;
 
+    version_table.set(
+        "engine_path",
+        lua.create_function(|_, ()| {
+            let path = std::env::current_exe()
+                .map_err(|e| LuaError::runtime(format!("could not determine engine path: {e}")))?;
+            Ok(path.to_string_lossy().to_string())
+        })?,
+    )?;
+
     globals.set("Version", version_table)?;
     Ok(())
 }

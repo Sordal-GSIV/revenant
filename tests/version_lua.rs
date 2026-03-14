@@ -75,3 +75,14 @@ async fn test_version_satisfies() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn test_version_engine_path_returns_non_empty_string() {
+    let engine = setup();
+    engine.set_script_error_hook(|name, err| panic!("{name}: {err}"));
+    engine.eval_lua(r#"
+        local path = Version.engine_path()
+        assert(type(path) == "string", "engine_path must return a string")
+        assert(#path > 0, "engine_path must not be empty")
+    "#).await.unwrap();
+}
