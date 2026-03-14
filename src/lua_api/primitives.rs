@@ -153,18 +153,28 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     })?)?;
 
     // get() — block until next downstream line for this script
+    // If the script is in unique mode, reads from unique buffer instead.
     let script_lines_rx_get = engine.script_lines_rx.clone();
     let thread_names_get = engine.thread_names.clone();
+    let want_uniq_get = engine.want_unique.clone();
+    let uniq_rx_get = engine.unique_lines_rx.clone();
     globals.set("get", lua.create_async_function(move |lua, ()| {
         let script_lines_rx = script_lines_rx_get.clone();
         let thread_names = thread_names_get.clone();
+        let want_uniq = want_uniq_get.clone();
+        let uniq_rx = uniq_rx_get.clone();
         async move {
             let ptr = lua.current_thread().to_pointer() as usize;
             let script_name: String = {
                 let map = thread_names.lock().unwrap();
                 map.get(&ptr).cloned().ok_or_else(|| LuaError::RuntimeError("get() called outside script context".into()))?
             };
-            let rx = {
+            let is_unique = want_uniq.lock().unwrap().contains(&script_name);
+            let rx = if is_unique {
+                let map = uniq_rx.lock().unwrap();
+                map.get(&script_name).cloned()
+                    .ok_or_else(|| LuaError::RuntimeError("unique buffer not initialized".into()))?
+            } else {
                 let map = script_lines_rx.lock().unwrap();
                 map.get(&script_name).cloned()
                     .ok_or_else(|| LuaError::RuntimeError(format!("no line buffer for script {script_name}")))?
@@ -272,11 +282,21 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     })?)?;
 
     // send_to_script(name, msg) — inject a line into another script's line buffer
+    // Routes to unique buffer if target script is in unique mode.
     let script_lines_tx = engine.script_lines_tx.clone();
+    let want_uniq_sts = engine.want_unique.clone();
+    let uniq_tx_sts = engine.unique_lines_tx.clone();
     globals.set("send_to_script", lua.create_function(move |_, (name, msg): (String, String)| {
-        let map = script_lines_tx.lock().unwrap();
-        if let Some(tx) = map.get(&name) {
-            let _ = tx.send(msg); // silently drop if target script exited
+        let is_unique = want_uniq_sts.lock().unwrap().contains(&name);
+        if is_unique {
+            if let Some(tx) = uniq_tx_sts.lock().unwrap().get(&name) {
+                let _ = tx.send(msg);
+            }
+        } else {
+            let map = script_lines_tx.lock().unwrap();
+            if let Some(tx) = map.get(&name) {
+                let _ = tx.send(msg); // silently drop if target script exited
+            }
         }
         Ok(())
     })?)?;
@@ -509,6 +529,130 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         return Err(LuaError::RuntimeError("upstream channel closed".into()));
                     }
+                }
+            }
+        }
+    })?)?;
+
+    // i_stand_alone() / toggle_unique() — toggle unique buffer mode for current script
+    let want_uniq = engine.want_unique.clone();
+    let uniq_tx = engine.unique_lines_tx.clone();
+    let uniq_rx = engine.unique_lines_rx.clone();
+    let thread_names_isa = engine.thread_names.clone();
+    let isa_fn = lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = thread_names_isa.lock().unwrap()
+            .get(&ptr).cloned()
+            .ok_or_else(|| LuaError::RuntimeError("i_stand_alone() called outside script context".into()))?;
+        let mut set = want_uniq.lock().unwrap();
+        if set.contains(&script_name) {
+            set.remove(&script_name);
+            uniq_tx.lock().unwrap().remove(&script_name);
+            uniq_rx.lock().unwrap().remove(&script_name);
+        } else {
+            set.insert(script_name.clone());
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            uniq_tx.lock().unwrap().insert(script_name.clone(), tx);
+            uniq_rx.lock().unwrap().insert(
+                script_name,
+                std::sync::Arc::new(tokio::sync::Mutex::new(rx)),
+            );
+        }
+        Ok(())
+    })?;
+    globals.set("i_stand_alone", isa_fn.clone())?;
+    globals.set("toggle_unique", isa_fn)?;
+
+    // unique_get() — blocking read from unique buffer (always reads unique, regardless of mode)
+    let uniq_rx_ug = engine.unique_lines_rx.clone();
+    let thread_names_ug2 = engine.thread_names.clone();
+    globals.set("unique_get", lua.create_async_function(move |lua, ()| {
+        let uniq_rx = uniq_rx_ug.clone();
+        let thread_names = thread_names_ug2.clone();
+        async move {
+            let ptr = lua.current_thread().to_pointer() as usize;
+            let script_name: String = {
+                let map = thread_names.lock().unwrap();
+                map.get(&ptr).cloned()
+                    .ok_or_else(|| LuaError::RuntimeError("unique_get() called outside script context".into()))?
+            };
+            let rx = {
+                let map = uniq_rx.lock().unwrap();
+                map.get(&script_name).cloned()
+                    .ok_or_else(|| LuaError::RuntimeError("unique buffer not initialized — call i_stand_alone() first".into()))?
+            };
+            let mut rx_guard = rx.lock().await;
+            match rx_guard.recv().await {
+                Some(line) => Ok(line),
+                None => Err(LuaError::RuntimeError("unique buffer closed".into())),
+            }
+        }
+    })?)?;
+
+    // unique_get_noblock() — non-blocking variant of unique_get()
+    let uniq_rx_nb = engine.unique_lines_rx.clone();
+    let thread_names_unb2 = engine.thread_names.clone();
+    globals.set("unique_get_noblock", lua.create_function(move |lua, ()| {
+        let ptr = lua.current_thread().to_pointer() as usize;
+        let script_name: String = {
+            let map = thread_names_unb2.lock().unwrap();
+            map.get(&ptr).cloned()
+                .ok_or_else(|| LuaError::RuntimeError("unique_get_noblock() called outside script context".into()))?
+        };
+        let rx = {
+            let map = uniq_rx_nb.lock().unwrap();
+            map.get(&script_name).cloned()
+                .ok_or_else(|| LuaError::RuntimeError("unique buffer not initialized — call i_stand_alone() first".into()))?
+        };
+        let result = match rx.try_lock() {
+            Ok(mut guard) => match guard.try_recv() {
+                Ok(line) => Ok(mlua::Value::String(lua.create_string(&line)?)),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(mlua::Value::Nil),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) =>
+                    Err(LuaError::RuntimeError("unique buffer closed".into())),
+            },
+            Err(_) => Ok(mlua::Value::Nil),
+        };
+        result
+    })?)?;
+
+    // unique_waitfor(pattern [, timeout_secs]) — wait for pattern in unique buffer
+    let uniq_rx_wf = engine.unique_lines_rx.clone();
+    let thread_names_uwf = engine.thread_names.clone();
+    globals.set("unique_waitfor", lua.create_async_function(move |lua, (pattern, timeout): (String, Option<f64>)| {
+        let uniq_rx = uniq_rx_wf.clone();
+        let thread_names = thread_names_uwf.clone();
+        async move {
+            let ptr = lua.current_thread().to_pointer() as usize;
+            let script_name: String = {
+                let map = thread_names.lock().unwrap();
+                map.get(&ptr).cloned()
+                    .ok_or_else(|| LuaError::RuntimeError("unique_waitfor() called outside script context".into()))?
+            };
+            let rx = {
+                let map = uniq_rx.lock().unwrap();
+                map.get(&script_name).cloned()
+                    .ok_or_else(|| LuaError::RuntimeError("unique buffer not initialized — call i_stand_alone() first".into()))?
+            };
+            let deadline = timeout.map(|t| {
+                tokio::time::Instant::now() + tokio::time::Duration::from_secs_f64(t)
+            });
+            let mut rx_guard = rx.lock().await;
+            loop {
+                let recv = rx_guard.recv();
+                let line = match deadline {
+                    Some(d) => match tokio::time::timeout_at(d, recv).await {
+                        Ok(Some(l)) => l,
+                        Ok(None) => return Err(LuaError::RuntimeError("unique buffer closed".into())),
+                        Err(_) => return Ok(mlua::Value::Nil), // timed out
+                    },
+                    None => match recv.await {
+                        Some(l) => l,
+                        None => return Err(LuaError::RuntimeError("unique buffer closed".into())),
+                    },
+                };
+                if line.contains(pattern.as_str()) {
+                    return Ok(mlua::Value::String(lua.create_string(&line)?));
                 }
             }
         }

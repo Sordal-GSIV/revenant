@@ -53,6 +53,12 @@ pub struct ScriptEngine {
     pub upstream_broadcast_tx: Arc<Mutex<Option<tokio::sync::broadcast::Sender<Vec<u8>>>>>,
     /// Set of script names currently listening to upstream.
     pub want_upstream: Arc<Mutex<HashSet<String>>>,
+    /// Set of script names in "unique buffer" mode (i_stand_alone).
+    pub want_unique: Arc<Mutex<HashSet<String>>>,
+    /// Per-script unique line buffer senders. Used by send_to_script() when target is unique.
+    pub unique_lines_tx: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
+    /// Per-script unique line buffer receivers.
+    pub unique_lines_rx: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<String>>>>>>,
     /// Per-script upstream line buffer senders.
     pub upstream_lines_tx: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
     /// Per-script upstream line buffer receivers.
@@ -97,6 +103,9 @@ impl ScriptEngine {
             no_echo: Arc::new(Mutex::new(std::collections::HashSet::new())),
             upstream_broadcast_tx: Arc::new(Mutex::new(None)),
             want_upstream: Arc::new(Mutex::new(HashSet::new())),
+            want_unique: Arc::new(Mutex::new(HashSet::new())),
+            unique_lines_tx: Arc::new(Mutex::new(HashMap::new())),
+            unique_lines_rx: Arc::new(Mutex::new(HashMap::new())),
             upstream_lines_tx: Arc::new(Mutex::new(HashMap::new())),
             upstream_lines_rx: Arc::new(Mutex::new(HashMap::new())),
             infomon: Arc::new(Mutex::new(None)),
@@ -224,6 +233,9 @@ impl ScriptEngine {
         self.want_upstream.lock().unwrap().remove(name);
         self.upstream_lines_tx.lock().unwrap().remove(name);
         self.upstream_lines_rx.lock().unwrap().remove(name);
+        self.want_unique.lock().unwrap().remove(name);
+        self.unique_lines_tx.lock().unwrap().remove(name);
+        self.unique_lines_rx.lock().unwrap().remove(name);
     }
 
     /// Kill all running scripts (respects no_kill_all protection).
@@ -249,6 +261,9 @@ impl ScriptEngine {
             let mut want_up = self.want_upstream.lock().unwrap();
             let mut up_tx = self.upstream_lines_tx.lock().unwrap();
             let mut up_rx = self.upstream_lines_rx.lock().unwrap();
+            let mut want_uniq = self.want_unique.lock().unwrap();
+            let mut uniq_tx = self.unique_lines_tx.lock().unwrap();
+            let mut uniq_rx = self.unique_lines_rx.lock().unwrap();
             for (name, _) in &to_kill {
                 tx_map.remove(name);
                 rx_map.remove(name);
@@ -256,6 +271,9 @@ impl ScriptEngine {
                 want_up.remove(name);
                 up_tx.remove(name);
                 up_rx.remove(name);
+                want_uniq.remove(name);
+                uniq_tx.remove(name);
+                uniq_rx.remove(name);
             }
         }
         for (_name, handle) in to_kill {
@@ -360,6 +378,9 @@ impl ScriptEngine {
         let script_lines_tx_clone = self.script_lines_tx.clone();
         let script_lines_rx_clone = self.script_lines_rx.clone();
         let at_exit_hooks_clone = self.at_exit_hooks.clone();
+        let want_unique_clone = self.want_unique.clone();
+        let unique_lines_tx_clone = self.unique_lines_tx.clone();
+        let unique_lines_rx_clone = self.unique_lines_rx.clone();
         let handle = tokio::spawn(async move {
             let result: LuaResult<()> = async {
                 let func: LuaFunction = lua.load(&code).set_name(&script_name).into_function()?;
@@ -398,6 +419,10 @@ impl ScriptEngine {
             // Clean up line buffer entries
             script_lines_tx_clone.lock().unwrap().remove(&script_name);
             script_lines_rx_clone.lock().unwrap().remove(&script_name);
+            // Clean up unique buffer entries
+            want_unique_clone.lock().unwrap().remove(&script_name);
+            unique_lines_tx_clone.lock().unwrap().remove(&script_name);
+            unique_lines_rx_clone.lock().unwrap().remove(&script_name);
         });
 
         self.running.lock().unwrap().insert(name.to_string(), handle);
