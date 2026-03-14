@@ -3,6 +3,7 @@ pub mod file;
 pub mod game_state;
 pub mod game_obj;
 pub mod hooks;
+pub mod http;
 pub mod json;
 pub mod map;
 pub mod primitives;
@@ -19,6 +20,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     hooks::register(engine)?;
     crypto::register(engine).map_err(|e| anyhow::anyhow!("crypto register: {e}"))?;
     file::register(engine).map_err(|e| anyhow::anyhow!("file register: {e}"))?;
+    http::register(engine).map_err(|e| anyhow::anyhow!("http register: {e}"))?;
     map::register(engine).map_err(|e| anyhow::anyhow!("map register: {e}"))?;
     game_obj::register(engine).map_err(|e| anyhow::anyhow!("game_obj register: {e}"))?;
     script::register(engine)?;
