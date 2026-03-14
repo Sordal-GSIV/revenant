@@ -74,6 +74,51 @@ function wait_while(func, interval)
     end
 end
 
+function move(direction)
+    local max_retries = 10
+    for attempt = 1, max_retries do
+        waitrt()
+        while GameState.stunned do pause(0.5) end
+        _raw_fput(direction)
+        -- Check for success or failure in the output
+        for _ = 1, 20 do
+            local line = get_noblock()
+            if not line then
+                pause(0.1)
+            else
+                if string.find(line, "obvious exits") or string.find(line, "Obvious exits")
+                   or string.find(line, "Obvious paths") or string.find(line, "obvious paths") then
+                    return true
+                elseif string.find(line, "%.%.%.wait") or string.find(line, "you can't do that")
+                   or string.find(line, "You can't do that") then
+                    pause(0.5)
+                    break -- retry
+                elseif string.find(line, "stunned") then
+                    while GameState.stunned do pause(0.5) end
+                    break -- retry
+                elseif string.find(line, "webbed") then
+                    pause(3)
+                    break -- retry
+                end
+            end
+        end
+    end
+    error("move(" .. direction .. ") failed after " .. max_retries .. " attempts")
+end
+
+-- Direction shortcuts
+function n()   return move("north") end
+function s()   return move("south") end
+function e()   return move("east") end
+function w()   return move("west") end
+function ne()  return move("northeast") end
+function se()  return move("southeast") end
+function sw()  return move("southwest") end
+function nw()  return move("northwest") end
+function u()   return move("up") end
+function d()   return move("down") end
+function out() return move("out") end
+
 function waitforre(pattern, timeout)
     local deadline = timeout and (os.time() + timeout) or nil
     while true do

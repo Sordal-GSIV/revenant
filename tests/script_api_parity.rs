@@ -434,3 +434,38 @@ async fn test_per_thread_identity_survives_yield() {
     let errs = errors.lock().unwrap();
     assert!(errs.is_empty(), "script errors: {:?}", *errs);
 }
+
+#[tokio::test]
+async fn test_move_sends_direction_and_waits() {
+    let sent: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let engine = ScriptEngine::new();
+    let cap = sent.clone();
+    engine.set_upstream_sink(move |cmd| { cap.lock().unwrap().push(cmd); });
+
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+
+    use revenant::game_state::GameState;
+    let gs = Arc::new(RwLock::new(GameState::default()));
+    engine.set_game_state(gs);
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"move("north")"#).unwrap();
+
+    engine.start_script("movetest", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Simulate room description indicating success
+    tx.send(Arc::new(b"[Town Square]\nObvious exits: south, east\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+    let cmds = sent.lock().unwrap();
+    assert!(cmds.iter().any(|c| c.contains("north")), "should have sent north");
+}
