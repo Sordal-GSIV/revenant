@@ -143,6 +143,43 @@ async fn test_clear_drains_line_buffer() {
 }
 
 #[tokio::test]
+async fn test_wait_clears_and_returns_next_line() {
+    let engine = ScriptEngine::new();
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Arc<Vec<u8>>>(64);
+    engine.set_downstream_channel(tx.clone());
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"
+        pause(0.1)  -- let stale line buffer before calling wait()
+        local line = wait()
+        -- wait() clears buffer first, then returns next fresh line
+        assert(line == "fresh line", "expected 'fresh line', got: " .. tostring(line))
+    "#).unwrap();
+
+    engine.start_script("waittest", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Send "stale" line — script is still in pause(0.1), so this buffers
+    tx.send(Arc::new(b"stale line\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Now script's pause has expired; wait() runs, clears "stale line", blocks on get()
+    // Send fresh line
+    tx.send(Arc::new(b"fresh line\n".to_vec())).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "script errors: {:?}", *errs);
+}
+
+#[tokio::test]
 async fn test_per_thread_identity_survives_yield() {
     let engine = ScriptEngine::new();
     engine.install_lua_api().unwrap();

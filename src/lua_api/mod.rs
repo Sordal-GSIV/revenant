@@ -31,5 +31,13 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     settings::register(engine)?;
     json::register(engine).map_err(|e| anyhow::anyhow!("json register: {e}"))?;
     version::register(engine).map_err(|e| anyhow::anyhow!("version register: {e}"))?;
+    register_lua_builtins(engine)?;
+    Ok(())
+}
+
+fn register_lua_builtins(engine: &ScriptEngine) -> Result<()> {
+    let builtins_src = include_str!("builtins.lua");
+    engine.lua.load(builtins_src).set_name("builtins").exec()
+        .map_err(|e| anyhow::anyhow!("builtins.lua: {e}"))?;
     Ok(())
 }
