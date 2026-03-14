@@ -59,6 +59,33 @@ async fn test_get_noblock_returns_nil_when_empty() {
 }
 
 #[tokio::test]
+async fn test_echo_prefixes_script_name() {
+    let responded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let engine = ScriptEngine::new();
+    let cap = responded.clone();
+    engine.set_respond_sink(move |msg| { cap.lock().unwrap().push(msg); });
+    engine.install_lua_api().unwrap();
+
+    let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let err_cap = errors.clone();
+    engine.set_script_error_hook(move |name, err| {
+        err_cap.lock().unwrap().push(format!("{name}: {err}"));
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), r#"echo("hello world")"#).unwrap();
+
+    engine.start_script("myecho", tmp.path().to_str().unwrap(), vec![]).unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let errs = errors.lock().unwrap();
+    assert!(errs.is_empty(), "script errors: {:?}", *errs);
+    let msgs = responded.lock().unwrap();
+    assert!(msgs.iter().any(|m| m.contains("[myecho]: hello world")),
+        "expected echo with script prefix, got: {:?}", *msgs);
+}
+
+#[tokio::test]
 async fn test_per_thread_identity_survives_yield() {
     let engine = ScriptEngine::new();
     engine.install_lua_api().unwrap();

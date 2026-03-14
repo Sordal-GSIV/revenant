@@ -139,6 +139,28 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
+    // echo(msg) — respond with script name prefix
+    let respond_sink = engine.respond_sink.clone();
+    let respond_log = engine.respond_log.clone();
+    let thread_names_echo = engine.thread_names.clone();
+    globals.set("echo", lua.create_function(move |lua, msg: String| {
+        let thread = lua.current_thread();
+        let ptr = thread.to_pointer() as usize;
+        let script_name: String = thread_names_echo.lock().unwrap()
+            .get(&ptr).cloned()
+            .unwrap_or_else(|| lua.globals().get("_REVENANT_SCRIPT").unwrap_or_else(|_| "unknown".to_string()));
+        let text = format!("[{script_name}]: {msg}");
+        {
+            let mut log = respond_log.lock().unwrap();
+            if log.len() >= 500 { log.pop_front(); }
+            log.push_back(text.clone());
+        }
+        if let Some(f) = respond_sink.lock().unwrap().as_ref() {
+            f(format!("<output class=\"mono\">{text}</output>\n"));
+        }
+        Ok(())
+    })?)?;
+
     // get_noblock() / nget() — non-blocking variant of get()
     let script_lines_rx2 = engine.script_lines_rx.clone();
     let thread_names2 = engine.thread_names.clone();
