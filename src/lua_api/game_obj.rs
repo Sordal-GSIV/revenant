@@ -12,10 +12,15 @@ pub struct LuaGameObj {
     pub before_name: Option<String>,
     pub after_name: Option<String>,
     registry: Arc<Mutex<GameObjRegistry>>,
+    type_data: Option<Arc<crate::type_data::TypeData>>,
 }
 
 impl LuaGameObj {
-    fn from_obj(obj: &GameObj, registry: Arc<Mutex<GameObjRegistry>>) -> Self {
+    fn from_obj(
+        obj: &GameObj,
+        registry: Arc<Mutex<GameObjRegistry>>,
+        type_data: Option<Arc<crate::type_data::TypeData>>,
+    ) -> Self {
         Self {
             id: obj.id.clone(),
             noun: obj.noun.clone(),
@@ -23,6 +28,7 @@ impl LuaGameObj {
             before_name: obj.before_name.clone(),
             after_name: obj.after_name.clone(),
             registry,
+            type_data,
         }
     }
 }
@@ -62,10 +68,23 @@ impl LuaUserData for LuaGameObj {
                 Some(items) => {
                     let t = lua.create_table()?;
                     for (i, obj) in items.iter().enumerate() {
-                        t.raw_set(i + 1, LuaGameObj::from_obj(obj, this.registry.clone()))?;
+                        t.raw_set(i + 1, LuaGameObj::from_obj(obj, this.registry.clone(), this.type_data.clone()))?;
                     }
                     Ok(LuaValue::Table(t))
                 }
+            }
+        });
+
+        fields.add_field_method_get("type", |_, this| {
+            match &this.type_data {
+                Some(td) => Ok(td.get_type(&this.noun, &this.name).map(|s| s.to_string())),
+                None => Ok(None),
+            }
+        });
+        fields.add_field_method_get("sellable", |_, this| {
+            match &this.type_data {
+                Some(td) => Ok(td.get_sellable(&this.noun, &this.name).map(|s| s.to_string())),
+                None => Ok(None),
             }
         });
     }
@@ -73,6 +92,12 @@ impl LuaUserData for LuaGameObj {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(LuaMetaMethod::ToString, |_, this, ()| {
             Ok(this.noun.clone())
+        });
+        methods.add_method("type_p", |_, this, tag: String| {
+            match &this.type_data {
+                Some(td) => Ok(td.is_type(&this.noun, &this.name, &tag)),
+                None => Ok(false),
+            }
         });
     }
 }
@@ -83,10 +108,11 @@ fn obj_array(
     lua: &Lua,
     objs: &[GameObj],
     registry: Arc<Mutex<GameObjRegistry>>,
+    type_data: Option<Arc<crate::type_data::TypeData>>,
 ) -> LuaResult<LuaTable> {
     let t = lua.create_table()?;
     for (i, obj) in objs.iter().enumerate() {
-        t.raw_set(i + 1, LuaGameObj::from_obj(obj, registry.clone()))?;
+        t.raw_set(i + 1, LuaGameObj::from_obj(obj, registry.clone(), type_data.clone()))?;
     }
     Ok(t)
 }
@@ -94,19 +120,22 @@ fn obj_array(
 pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     let lua = &engine.lua;
     let go_arc = engine.game_objs.clone();
+    let td_arc = engine.type_data.clone();
 
     let game_obj_tbl = lua.create_table()?;
 
     // GameObj.npcs()
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         game_obj_tbl.raw_set("npcs", lua.create_function(move |lua, ()| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(lua.create_table()?),
                 Some(r) => {
                     let r2 = r.lock().unwrap();
-                    obj_array(lua, &r2.npcs, r.clone())
+                    obj_array(lua, &r2.npcs, r.clone(), type_data)
                 }
             }
         })?)?;
@@ -115,13 +144,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // GameObj.loot()
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         game_obj_tbl.raw_set("loot", lua.create_function(move |lua, ()| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(lua.create_table()?),
                 Some(r) => {
                     let r2 = r.lock().unwrap();
-                    obj_array(lua, &r2.loot, r.clone())
+                    obj_array(lua, &r2.loot, r.clone(), type_data)
                 }
             }
         })?)?;
@@ -130,13 +161,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // GameObj.pcs()
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         game_obj_tbl.raw_set("pcs", lua.create_function(move |lua, ()| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(lua.create_table()?),
                 Some(r) => {
                     let r2 = r.lock().unwrap();
-                    obj_array(lua, &r2.pcs, r.clone())
+                    obj_array(lua, &r2.pcs, r.clone(), type_data)
                 }
             }
         })?)?;
@@ -145,13 +178,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // GameObj.inv()
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         game_obj_tbl.raw_set("inv", lua.create_function(move |lua, ()| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(lua.create_table()?),
                 Some(r) => {
                     let r2 = r.lock().unwrap();
-                    obj_array(lua, &r2.inv, r.clone())
+                    obj_array(lua, &r2.inv, r.clone(), type_data)
                 }
             }
         })?)?;
@@ -160,13 +195,15 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // GameObj.room_desc()
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         game_obj_tbl.raw_set("room_desc", lua.create_function(move |lua, ()| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(lua.create_table()?),
                 Some(r) => {
                     let r2 = r.lock().unwrap();
-                    obj_array(lua, &r2.room_desc, r.clone())
+                    obj_array(lua, &r2.room_desc, r.clone(), type_data)
                 }
             }
         })?)?;
@@ -175,8 +212,10 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // GameObj.right_hand()
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         game_obj_tbl.raw_set("right_hand", lua.create_function(move |lua, ()| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(LuaValue::Nil),
                 Some(r) => {
@@ -184,7 +223,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     match &r2.right_hand {
                         None => Ok(LuaValue::Nil),
                         Some(obj) => Ok(LuaValue::UserData(lua.create_userdata(
-                            LuaGameObj::from_obj(obj, r.clone())
+                            LuaGameObj::from_obj(obj, r.clone(), type_data)
                         )?)),
                     }
                 }
@@ -195,8 +234,10 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // GameObj.left_hand()
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         game_obj_tbl.raw_set("left_hand", lua.create_function(move |lua, ()| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(LuaValue::Nil),
                 Some(r) => {
@@ -204,7 +245,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     match &r2.left_hand {
                         None => Ok(LuaValue::Nil),
                         Some(obj) => Ok(LuaValue::UserData(lua.create_userdata(
-                            LuaGameObj::from_obj(obj, r.clone())
+                            LuaGameObj::from_obj(obj, r.clone(), type_data)
                         )?)),
                     }
                 }
@@ -215,14 +256,16 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // GameObj.dead() — dead NPCs
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         game_obj_tbl.raw_set("dead", lua.create_function(move |lua, ()| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(lua.create_table()?),
                 Some(r) => {
                     let r2 = r.lock().unwrap();
                     let dead: Vec<GameObj> = r2.dead_npcs().into_iter().cloned().collect();
-                    obj_array(lua, &dead, r.clone())
+                    obj_array(lua, &dead, r.clone(), type_data)
                 }
             }
         })?)?;
@@ -231,9 +274,11 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     // Metatable: GameObj["key"] — lookup by ID, noun, or name substring
     {
         let go = go_arc.clone();
+        let td = td_arc.clone();
         let mt = lua.create_table()?;
         mt.raw_set("__index", lua.create_function(move |lua, (_t, key): (LuaTable, String)| {
             let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
             match reg.as_ref() {
                 None => Ok(LuaValue::Nil),
                 Some(r) => {
@@ -241,7 +286,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     match r2.find(&key) {
                         None => Ok(LuaValue::Nil),
                         Some(obj) => Ok(LuaValue::UserData(lua.create_userdata(
-                            LuaGameObj::from_obj(obj, r.clone())
+                            LuaGameObj::from_obj(obj, r.clone(), type_data)
                         )?)),
                     }
                 }

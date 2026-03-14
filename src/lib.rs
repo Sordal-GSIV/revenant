@@ -11,6 +11,7 @@ pub mod xml_parser;
 pub mod db;
 pub mod infomon;
 pub mod spell_data;
+pub mod type_data;
 pub mod lua_api;
 pub mod map;
 #[cfg(feature = "monitor")]

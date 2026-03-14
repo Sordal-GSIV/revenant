@@ -47,6 +47,7 @@ pub struct ScriptEngine {
     pub no_pause_all: Arc<Mutex<std::collections::HashSet<String>>>,
     pub infomon: Arc<Mutex<Option<crate::infomon::Infomon>>>,
     pub spell_list: Arc<RwLock<Option<Arc<crate::spell_data::SpellList>>>>,
+    pub type_data: Arc<RwLock<Option<Arc<crate::type_data::TypeData>>>>,
 }
 
 impl ScriptEngine {
@@ -79,11 +80,16 @@ impl ScriptEngine {
             no_pause_all: Arc::new(Mutex::new(std::collections::HashSet::new())),
             infomon: Arc::new(Mutex::new(None)),
             spell_list: Arc::new(RwLock::new(None)),
+            type_data: Arc::new(RwLock::new(None)),
         }
     }
 
     pub fn set_spell_list(&self, sl: Arc<crate::spell_data::SpellList>) {
         *self.spell_list.write().unwrap_or_else(|e| e.into_inner()) = Some(sl);
+    }
+
+    pub fn set_type_data(&self, td: Arc<crate::type_data::TypeData>) {
+        *self.type_data.write().unwrap_or_else(|e| e.into_inner()) = Some(td);
     }
 
     /// Register a callback invoked when a script exits with an error.
