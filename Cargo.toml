@@ -36,6 +36,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bytes = "1"
 notify = "6"
+reqwest = { version = "0.12", features = ["rustls-tls"] }
+sha2 = "0.10"
+semver = "1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
