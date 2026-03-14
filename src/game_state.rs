@@ -132,6 +132,77 @@ pub struct ActiveSpell {
     pub duration_secs: Option<u32>,
 }
 
+/// Wound or scar severity for each of 16 body parts (0 = none, 1-3 = severity).
+#[derive(Debug, Clone, Default)]
+pub struct BodyInjuries {
+    pub head: u8,
+    pub neck: u8,
+    pub back: u8,
+    pub chest: u8,
+    pub abdomen: u8,
+    pub left_eye: u8,
+    pub right_eye: u8,
+    pub left_arm: u8,
+    pub right_arm: u8,
+    pub left_hand: u8,
+    pub right_hand: u8,
+    pub left_leg: u8,
+    pub right_leg: u8,
+    pub left_foot: u8,
+    pub right_foot: u8,
+    pub nsys: u8,
+}
+
+impl BodyInjuries {
+    /// Set the severity for a body part by its XML id string.
+    /// Returns false if the id is not recognized.
+    pub fn set(&mut self, xml_id: &str, severity: u8) -> bool {
+        match xml_id {
+            "head"      => self.head = severity,
+            "neck"      => self.neck = severity,
+            "back"      => self.back = severity,
+            "chest"     => self.chest = severity,
+            "abdomen"   => self.abdomen = severity,
+            "leftEye"   => self.left_eye = severity,
+            "rightEye"  => self.right_eye = severity,
+            "leftArm"   => self.left_arm = severity,
+            "rightArm"  => self.right_arm = severity,
+            "leftHand"  => self.left_hand = severity,
+            "rightHand" => self.right_hand = severity,
+            "leftLeg"   => self.left_leg = severity,
+            "rightLeg"  => self.right_leg = severity,
+            "leftFoot"  => self.left_foot = severity,
+            "rightFoot" => self.right_foot = severity,
+            "nsys"      => self.nsys = severity,
+            _ => return false,
+        }
+        true
+    }
+
+    /// Get severity by Lua key (snake_case or camelCase).
+    pub fn get(&self, key: &str) -> Option<u8> {
+        match key {
+            "head"                          => Some(self.head),
+            "neck"                          => Some(self.neck),
+            "back"                          => Some(self.back),
+            "chest"                         => Some(self.chest),
+            "abdomen" | "abs"               => Some(self.abdomen),
+            "left_eye"  | "leftEye"  | "leye"  => Some(self.left_eye),
+            "right_eye" | "rightEye" | "reye"  => Some(self.right_eye),
+            "left_arm"  | "leftArm"  | "larm"  => Some(self.left_arm),
+            "right_arm" | "rightArm" | "rarm"  => Some(self.right_arm),
+            "left_hand" | "leftHand" | "lhand" => Some(self.left_hand),
+            "right_hand"| "rightHand"| "rhand" => Some(self.right_hand),
+            "left_leg"  | "leftLeg"  | "lleg"  => Some(self.left_leg),
+            "right_leg" | "rightLeg" | "rleg"  => Some(self.right_leg),
+            "left_foot" | "leftFoot" | "lfoot" => Some(self.left_foot),
+            "right_foot"| "rightFoot"| "rfoot" => Some(self.right_foot),
+            "nsys" | "nerves"                   => Some(self.nsys),
+            _ => None,
+        }
+    }
+}
+
 // Note: GameState intentionally omits PartialEq — Instant does not implement PartialEq
 #[derive(Debug, Clone, Default)]
 pub struct GameState {
@@ -179,6 +250,9 @@ pub struct GameState {
 
     pub right_hand: Option<String>,
     pub left_hand: Option<String>,
+
+    pub wounds: BodyInjuries,
+    pub scars: BodyInjuries,
 
     pub server_time: i64,
     pub prompt: String,

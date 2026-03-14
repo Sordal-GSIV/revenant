@@ -1,4 +1,4 @@
-use revenant::game_state::{GameState, Stance, MindState, EncumbranceState, Game};
+use revenant::game_state::{GameState, Stance, MindState, EncumbranceState, Game, BodyInjuries};
 use revenant::xml_parser::XmlEvent;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -223,4 +223,71 @@ fn test_new_indicators_default_false() {
     assert!(!gs.cutthroat);
     assert!(!gs.silenced);
     assert!(!gs.bound);
+}
+
+#[test]
+fn test_body_injuries_default_all_zero() {
+    let injuries = BodyInjuries::default();
+    assert_eq!(injuries.head, 0);
+    assert_eq!(injuries.nsys, 0);
+    assert_eq!(injuries.left_eye, 0);
+    assert_eq!(injuries.right_foot, 0);
+}
+
+#[test]
+fn test_body_injuries_set_xml_id() {
+    let mut injuries = BodyInjuries::default();
+    assert!(injuries.set("head", 3));
+    assert_eq!(injuries.head, 3);
+    assert!(injuries.set("leftEye", 2));
+    assert_eq!(injuries.left_eye, 2);
+    assert!(injuries.set("nsys", 1));
+    assert_eq!(injuries.nsys, 1);
+    // Unknown id returns false
+    assert!(!injuries.set("unknown_part", 1));
+}
+
+#[test]
+fn test_body_injuries_set_all_parts() {
+    let mut injuries = BodyInjuries::default();
+    let parts = [
+        "head", "neck", "back", "chest", "abdomen",
+        "leftEye", "rightEye", "leftArm", "rightArm",
+        "leftHand", "rightHand", "leftLeg", "rightLeg",
+        "leftFoot", "rightFoot", "nsys",
+    ];
+    for (i, part) in parts.iter().enumerate() {
+        let sev = ((i % 3) + 1) as u8;
+        assert!(injuries.set(part, sev), "set failed for {part}");
+    }
+    assert_eq!(injuries.head, 1);
+    assert_eq!(injuries.neck, 2);
+    assert_eq!(injuries.back, 3);
+}
+
+#[test]
+fn test_body_injuries_get_snake_case() {
+    let mut injuries = BodyInjuries::default();
+    injuries.set("leftArm", 2);
+    assert_eq!(injuries.get("left_arm"), Some(2));
+    assert_eq!(injuries.get("leftArm"), Some(2));
+    assert_eq!(injuries.get("larm"), Some(2));
+}
+
+#[test]
+fn test_body_injuries_get_aliases() {
+    let mut injuries = BodyInjuries::default();
+    injuries.set("abdomen", 1);
+    injuries.set("nsys", 3);
+    assert_eq!(injuries.get("abs"), Some(1));
+    assert_eq!(injuries.get("abdomen"), Some(1));
+    assert_eq!(injuries.get("nerves"), Some(3));
+    assert_eq!(injuries.get("nsys"), Some(3));
+}
+
+#[test]
+fn test_body_injuries_get_unknown_returns_none() {
+    let injuries = BodyInjuries::default();
+    assert_eq!(injuries.get("tail"), None);
+    assert_eq!(injuries.get(""), None);
 }
