@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use clap::Parser;
 use std::sync::Arc;
 use tracing::info;
