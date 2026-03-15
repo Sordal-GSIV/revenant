@@ -105,6 +105,13 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         })?,
     )?;
 
+    version_table.set(
+        "current",
+        lua.create_function(|_, ()| {
+            Ok(env!("CARGO_PKG_VERSION").to_string())
+        })?,
+    )?;
+
     globals.set("Version", version_table)?;
     Ok(())
 }
