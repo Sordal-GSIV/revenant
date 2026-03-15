@@ -166,6 +166,7 @@ fn psm_category_to_prefix(category: &str) -> Option<&'static str> {
 fn normalize_key(raw: &str) -> String {
     raw.trim()
         .to_lowercase()
+        .replace('\'', "")
         .replace([' ', '-'], "_")
         .replace("__", "_")
 }
@@ -247,9 +248,9 @@ impl Infomon {
                 let p = prefix.clone();
                 self.parse_in_psm(line, &p);
             }
-            ParserState::InResource { .. } => self.parse_ready(line),
-            ParserState::InWarcry => self.parse_ready(line),
-            ParserState::InProfile { .. } => self.parse_ready(line),
+            ParserState::InResource { .. } => self.parse_in_resource(line),
+            ParserState::InWarcry => self.parse_in_warcry(line),
+            ParserState::InProfile { verified } => self.parse_in_profile(line, verified),
         }
     }
 
@@ -338,6 +339,56 @@ impl Infomon {
                 self.state = ParserState::InPSM { prefix: prefix.to_string() };
                 self.batch.clear();
             }
+            return;
+        }
+
+        // RESOURCE lines
+        if let Some(caps) = RESOURCE_LINE.captures(line) {
+            let rtype = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let weekly = caps.get(2).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            let total = caps.get(3).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.cache.insert("resources.type".into(), rtype.to_string());
+            self.cache.insert("resources.weekly".into(), weekly.clone());
+            self.cache.insert("resources.total".into(), total.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "resources.type", rtype);
+            let _ = self.db.set_char_data(&self.character, &self.game, "resources.weekly", &weekly);
+            let _ = self.db.set_char_data(&self.character, &self.game, "resources.total", &total);
+            self.state = ParserState::InResource { had_data: true };
+            return;
+        }
+        if let Some(caps) = RESOURCE_SUFFUSED.captures(line) {
+            let suffused = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.cache.insert("resources.suffused".into(), suffused.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "resources.suffused", &suffused);
+            self.state = ParserState::InResource { had_data: true };
+            return;
+        }
+        if let Some(caps) = RESOURCE_VOLN.captures(line) {
+            let favor = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.cache.insert("resources.voln_favor".into(), favor.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "resources.voln_favor", &favor);
+            self.state = ParserState::InResource { had_data: true };
+            return;
+        }
+        if let Some(caps) = RESOURCE_COVERT.captures(line) {
+            let charges = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.cache.insert("resources.covert_arts_charges".into(), charges.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "resources.covert_arts_charges", &charges);
+            self.state = ParserState::InResource { had_data: true };
+            return;
+        }
+
+        // WARCRY start
+        if WARCRY_START.is_match(line) {
+            self.state = ParserState::InWarcry;
+            self.batch.clear();
+            return;
+        }
+
+        // PROFILE start
+        if PROFILE_START.is_match(line) {
+            self.state = ParserState::InProfile { verified: false };
+            self.batch.clear();
             return;
         }
     }
@@ -460,6 +511,73 @@ impl Infomon {
             self.flush_batch();
             self.state = ParserState::Ready;
             return;
+        }
+    }
+
+    fn parse_in_resource(&mut self, line: &str) {
+        // If any resource pattern matches, delegate back through parse_ready
+        if RESOURCE_LINE.is_match(line) || RESOURCE_SUFFUSED.is_match(line) ||
+           RESOURCE_VOLN.is_match(line) || RESOURCE_COVERT.is_match(line) {
+            self.state = ParserState::Ready;
+            self.parse_ready(line);
+            return;
+        }
+        // Non-matching line ends the resource block
+        self.state = ParserState::Ready;
+        self.parse_ready(line);
+    }
+
+    fn parse_in_warcry(&mut self, line: &str) {
+        if let Some(caps) = WARCRY_LINE.captures(line) {
+            let name = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let key = format!("warcry.{}", normalize_key(name));
+            self.batch.push((key, "1".to_string()));
+            return;
+        }
+        // Empty or non-matching line ends the block
+        self.flush_batch();
+        self.state = ParserState::Ready;
+    }
+
+    fn parse_in_profile(&mut self, line: &str, verified: bool) {
+        if !verified {
+            if let Some(caps) = PROFILE_NAME.captures(line) {
+                let name = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                if name.eq_ignore_ascii_case(&self.character) {
+                    self.state = ParserState::InProfile { verified: true };
+                } else {
+                    self.batch.clear();
+                    self.state = ParserState::Ready;
+                }
+            }
+            return;
+        }
+        if let Some(caps) = PROFILE_ACCOUNT_NAME.captures(line) {
+            let name = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            self.batch.push(("account.name".into(), name.to_string()));
+            return;
+        }
+        if let Some(caps) = PROFILE_ACCOUNT_TYPE.captures(line) {
+            let raw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let normalized = match raw {
+                "F2P" => "Free",
+                "Standard" => "Normal",
+                other => other,
+            };
+            self.batch.push(("account.type".into(), normalized.to_string()));
+            return;
+        }
+        if let Some(caps) = PROFILE_CHE.captures(line) {
+            let house = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            self.batch.push(("che".into(), normalize_key(house)));
+            self.flush_batch();
+            self.state = ParserState::Ready;
+            return;
+        }
+        if PROFILE_NO_HOUSE.is_match(line) {
+            self.batch.push(("che".into(), "none".to_string()));
+            self.flush_batch();
+            self.state = ParserState::Ready;
         }
     }
 
@@ -719,5 +837,80 @@ mod tests {
         im.parse("  Spirit Mana Control  spiritmc        5/50  Passive");
         im.parse("   Subcategory: all");
         assert_eq!(im.get("ascension.spiritmc"), Some("5"));
+    }
+
+    #[test]
+    fn test_parse_resource() {
+        let mut im = test_infomon();
+        im.parse("Voln Favor: 39,613,200");
+        im.parse("Essence: 34,000/50,000 (Weekly)     78,507/200,000 (Total)");
+        im.parse("Suffused Essence: 1,678");
+        im.parse("Some unrelated line that ends resource block");
+        assert_eq!(im.get("resources.voln_favor"), Some("39613200"));
+        assert_eq!(im.get("resources.type"), Some("Essence"));
+        assert_eq!(im.get("resources.weekly"), Some("34000"));
+        assert_eq!(im.get("resources.total"), Some("78507"));
+        assert_eq!(im.get("resources.suffused"), Some("1678"));
+    }
+
+    #[test]
+    fn test_parse_resource_covert_arts() {
+        let mut im = test_infomon();
+        im.parse("Covert Arts Charges: 150/200");
+        im.parse("unrelated");
+        assert_eq!(im.get("resources.covert_arts_charges"), Some("150"));
+    }
+
+    #[test]
+    fn test_parse_warcry() {
+        let mut im = test_infomon();
+        im.parse("You have learned the following War Cries:");
+        assert_eq!(im.state, ParserState::InWarcry);
+        im.parse("    Bertrandt's Bellow");
+        im.parse("    Yertie's Yowlp");
+        im.parse("    Carn's Cry");
+        im.parse("");
+        assert_eq!(im.state, ParserState::Ready);
+        assert_eq!(im.get("warcry.bertrandts_bellow"), Some("1"));
+        assert_eq!(im.get("warcry.yerties_yowlp"), Some("1"));
+        assert_eq!(im.get("warcry.carns_cry"), Some("1"));
+    }
+
+    #[test]
+    fn test_parse_profile() {
+        let mut im = test_infomon();
+        im.parse("PERSONAL INFORMATION");
+        assert_eq!(im.state, ParserState::InProfile { verified: false });
+        im.parse("Name: Ondreian");
+        assert_eq!(im.state, ParserState::InProfile { verified: true });
+        im.parse("Account Name: myaccount");
+        im.parse("Account Type: Premium");
+        im.parse("Member of House of the Rising Phoenix");
+        assert_eq!(im.state, ParserState::Ready);
+        assert_eq!(im.get("account.name"), Some("myaccount"));
+        assert_eq!(im.get("account.type"), Some("Premium"));
+        assert_eq!(im.get("che"), Some("rising_phoenix"));
+    }
+
+    #[test]
+    fn test_parse_profile_wrong_character() {
+        let mut im = test_infomon();
+        im.parse("PERSONAL INFORMATION");
+        im.parse("Name: SomeoneElse");
+        assert_eq!(im.state, ParserState::Ready);
+        assert!(im.get("account.name").is_none());
+    }
+
+    #[test]
+    fn test_parse_profile_no_house() {
+        let mut im = test_infomon();
+        im.parse("PERSONAL INFORMATION");
+        im.parse("Name: Ondreian");
+        im.parse("Account Name: test123");
+        im.parse("Account Type: F2P");
+        im.parse("No House affiliation");
+        assert_eq!(im.state, ParserState::Ready);
+        assert_eq!(im.get("account.type"), Some("Free"));
+        assert_eq!(im.get("che"), Some("none"));
     }
 }
