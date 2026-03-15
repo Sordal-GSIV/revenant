@@ -194,6 +194,7 @@ pub struct Infomon {
     state: ParserState,
     batch: Vec<(String, String)>,
     cache: HashMap<String, String>,
+    synced: bool,
 }
 
 impl Infomon {
@@ -213,6 +214,7 @@ impl Infomon {
             state: ParserState::Ready,
             batch: Vec::new(),
             cache,
+            synced: false,
         }
     }
 
@@ -234,6 +236,41 @@ impl Infomon {
             .filter(|(k, _)| k.starts_with(prefix))
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect()
+    }
+
+    pub fn is_synced(&self) -> bool { self.synced }
+    pub fn set_synced(&mut self, v: bool) { self.synced = v; }
+
+    pub fn cached_keys(&self) -> Vec<String> {
+        self.cache.keys().cloned().collect()
+    }
+
+    /// Set a value directly in cache and DB (for settings like show_durations).
+    pub fn set_direct(&mut self, key: &str, value: &str) {
+        self.cache.insert(key.to_string(), value.to_string());
+        let _ = self.db.set_char_data(&self.character, &self.game, key, value);
+    }
+
+    pub fn reset(&mut self) {
+        if let Err(e) = self.db.delete_char_data_for_character(&self.character, &self.game) {
+            tracing::warn!("Infomon: failed to wipe char_data: {e}");
+        }
+        self.cache.clear();
+        self.synced = false;
+    }
+
+    pub fn show(&self, full: bool) -> Vec<String> {
+        let mut keys: Vec<&String> = self.cache.keys().collect();
+        keys.sort();
+        let mut lines = Vec::new();
+        for key in keys {
+            let val = &self.cache[key];
+            if !full && (val == "0" || val.is_empty()) {
+                continue;
+            }
+            lines.push(format!("  {key}: {val}"));
+        }
+        lines
     }
 
     /// Parse a single line of game output. Called by the downstream hook.
