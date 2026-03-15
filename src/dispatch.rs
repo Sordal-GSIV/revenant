@@ -102,17 +102,45 @@ pub async fn dispatch(raw: &str, engine: &Arc<ScriptEngine>) -> DispatchResult {
         }
         name => {
             let scripts_dir = engine.scripts_dir.lock().unwrap().clone();
-            let path = format!("{}/{}.lua", scripts_dir, name);
-            if std::path::Path::new(&path).exists() {
-                let args = parse_args(rest);
-                match engine.start_script(name, &path, args) {
-                    Ok(()) => {}
-                    Err(e) => engine.respond(&format!("Failed to start script '{name}': {e}")),
-                }
+            let dir_path = format!("{}/{}/init.lua", scripts_dir, name);
+            let file_path = format!("{}/{}.lua", scripts_dir, name);
+            let path = if std::path::Path::new(&dir_path).exists() {
+                dir_path
+            } else if std::path::Path::new(&file_path).exists() {
+                file_path
             } else {
                 engine.respond(&format!("Script not found: {name}"));
+                return DispatchResult::Consumed;
+            };
+            let args = parse_args(rest);
+            match engine.start_script(name, &path, args) {
+                Ok(()) => {}
+                Err(e) => engine.respond(&format!("Failed to start script '{name}': {e}")),
             }
             DispatchResult::Consumed
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_args_basic() {
+        let args = parse_args("install go2 --force");
+        assert_eq!(args, vec!["install go2 --force", "install", "go2", "--force"]);
+    }
+
+    #[test]
+    fn parse_args_empty() {
+        let args = parse_args("");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn parse_args_quoted() {
+        let args = parse_args("install \"my script\" --force");
+        assert_eq!(args, vec!["install \"my script\" --force", "install", "my script", "--force"]);
     }
 }
