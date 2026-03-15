@@ -147,6 +147,20 @@ static CHAR_GENDER_AGE_FULL: LazyLock<Regex> = LazyLock::new(|| Regex::new(
     r"^Gender:\s+(\w+)\s+Age:\s+([\d,]+)\s+Expr:\s+([\d,]+)\s+Level:\s+(\d+)"
 ).unwrap());
 
+// ── PSM Category Mapping ─────────────────────────────────────────────────────
+
+fn psm_category_to_prefix(category: &str) -> Option<&'static str> {
+    match category {
+        "Armor Specializations" => Some("armor"),
+        "Combat Maneuvers" => Some("cman"),
+        "Feats" => Some("feat"),
+        "Shield Specializations" => Some("shield"),
+        "Weapon Techniques" => Some("weapon"),
+        "Ascension Abilities" => Some("ascension"),
+        _ => None,
+    }
+}
+
 // ── Key Normalization ───────────────────────────────────────────────────────
 
 fn normalize_key(raw: &str) -> String {
@@ -229,7 +243,10 @@ impl Infomon {
             ParserState::InSkills => self.parse_in_skills(line),
             // New states — implementations added in subsequent tasks
             ParserState::InExperience => self.parse_in_experience(line),
-            ParserState::InPSM { .. } => self.parse_ready(line),
+            ParserState::InPSM { ref prefix } => {
+                let p = prefix.clone();
+                self.parse_in_psm(line, &p);
+            }
             ParserState::InResource { .. } => self.parse_ready(line),
             ParserState::InWarcry => self.parse_ready(line),
             ParserState::InProfile { .. } => self.parse_ready(line),
@@ -313,6 +330,16 @@ impl Infomon {
             let _ = self.db.set_char_data(&self.character, &self.game, "citizenship", "None");
             return;
         }
+
+        // PSM start
+        if let Some(caps) = PSM_START.captures(line) {
+            let cat = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            if let Some(prefix) = psm_category_to_prefix(cat) {
+                self.state = ParserState::InPSM { prefix: prefix.to_string() };
+                self.batch.clear();
+            }
+            return;
+        }
     }
 
     fn parse_in_experience(&mut self, line: &str) {
@@ -347,6 +374,20 @@ impl Infomon {
         }
 
         if EXP_END.is_match(line) {
+            self.flush_batch();
+            self.state = ParserState::Ready;
+            return;
+        }
+    }
+
+    fn parse_in_psm(&mut self, line: &str, prefix: &str) {
+        if let Some(caps) = PSM_LINE.captures(line) {
+            let command = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let ranks = caps.get(2).map(|m| m.as_str()).unwrap_or("0");
+            self.batch.push((format!("{prefix}.{command}"), ranks.to_string()));
+            return;
+        }
+        if PSM_END.is_match(line) {
             self.flush_batch();
             self.state = ParserState::Ready;
             return;
@@ -643,5 +684,40 @@ mod tests {
         let mut im = test_infomon();
         im.parse("You don't seem to have citizenship.");
         assert_eq!(im.get("citizenship"), Some("None"));
+    }
+
+    #[test]
+    fn test_parse_psm_armor() {
+        let mut im = test_infomon();
+        im.parse("Ondreian, the following Armor Specializations are available:");
+        assert_eq!(im.state, ParserState::InPSM { prefix: "armor".into() });
+        im.parse("  Armor Blessing       blessing        1/5   Buff");
+        im.parse("  Armor Reinforcement  reinforcement   2/5   Buff");
+        im.parse("  Armor Spike Mastery  spikemastery    2/2   Passive");
+        im.parse("   Subcategory: all");
+        assert_eq!(im.state, ParserState::Ready);
+        assert_eq!(im.get("armor.blessing"), Some("1"));
+        assert_eq!(im.get("armor.reinforcement"), Some("2"));
+        assert_eq!(im.get("armor.spikemastery"), Some("2"));
+    }
+
+    #[test]
+    fn test_parse_psm_cman() {
+        let mut im = test_infomon();
+        im.parse("Ondreian, the following Combat Maneuvers are available:");
+        assert_eq!(im.state, ParserState::InPSM { prefix: "cman".into() });
+        im.parse("  Sweep                sweep           3/3   Attack");
+        im.parse("   Subcategory: all");
+        assert_eq!(im.state, ParserState::Ready);
+        assert_eq!(im.get("cman.sweep"), Some("3"));
+    }
+
+    #[test]
+    fn test_parse_psm_ascension() {
+        let mut im = test_infomon();
+        im.parse("Ondreian, the following Ascension Abilities are available:");
+        im.parse("  Spirit Mana Control  spiritmc        5/50  Passive");
+        im.parse("   Subcategory: all");
+        assert_eq!(im.get("ascension.spiritmc"), Some("5"));
     }
 }
