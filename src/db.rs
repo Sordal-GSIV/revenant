@@ -80,6 +80,18 @@ impl Db {
         Ok(())
     }
 
+    pub fn list_char_settings(&self, char: &str, game: &str, prefix: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let pattern = format!("{}%", prefix);
+        let mut s = conn.prepare(
+            "SELECT key, value FROM char_settings WHERE character=?1 AND game=?2 AND key LIKE ?3"
+        )?;
+        let rows = s.query_map(params![char, game, pattern], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     pub fn get_user_var(&self, game: &str, key: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         let mut s = conn.prepare("SELECT value FROM user_vars WHERE game=?1 AND key=?2")?;
@@ -101,6 +113,15 @@ impl Db {
             "DELETE FROM user_vars WHERE game=?1 AND key=?2",
             params![game, key])?;
         Ok(())
+    }
+
+    pub fn list_user_vars(&self, game: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut s = conn.prepare("SELECT key, value FROM user_vars WHERE game=?1")?;
+        let rows = s.query_map(params![game], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     pub fn get_char_data(&self, char: &str, game: &str, key: &str) -> Result<Option<String>> {
