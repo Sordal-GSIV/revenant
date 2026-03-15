@@ -82,11 +82,9 @@ impl Infomon {
     pub fn new(db: Db, character: &str, game: &str) -> Self {
         let mut cache = HashMap::new();
         // Load existing data from DB into cache
-        for prefix in &["stat.", "skill.", "spell."] {
-            if let Ok(pairs) = db.get_char_data_prefix(character, game, prefix) {
-                for (k, v) in pairs {
-                    cache.insert(k, v);
-                }
+        if let Ok(pairs) = db.get_all_char_data(character, game) {
+            for (k, v) in pairs {
+                cache.insert(k, v);
             }
         }
         Self {

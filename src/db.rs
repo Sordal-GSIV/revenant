@@ -170,6 +170,30 @@ impl Db {
         }
         Ok(result)
     }
+
+    pub fn get_all_char_data(&self, character: &str, game: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT key, value FROM char_data WHERE character = ? AND game = ?"
+        )?;
+        let rows = stmt.query_map(params![character, game], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn delete_char_data_for_character(&self, character: &str, game: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM char_data WHERE character = ? AND game = ?",
+            params![character, game],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -218,5 +242,35 @@ mod tests {
 
         let skills = db.get_char_data_prefix("Ondreian", "GS3", "skill.").unwrap();
         assert_eq!(skills.len(), 1);
+    }
+
+    #[test]
+    fn test_get_all_char_data() {
+        let db = Db::open(":memory:").unwrap();
+        db.set_char_data("Ondreian", "GS3", "stat.race", "Human").unwrap();
+        db.set_char_data("Ondreian", "GS3", "citizenship", "Wehnimer's Landing").unwrap();
+        db.set_char_data("Ondreian", "GS3", "che", "none").unwrap();
+        db.set_char_data("OtherChar", "GS3", "stat.race", "Elf").unwrap();
+
+        let all = db.get_all_char_data("Ondreian", "GS3").unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().any(|(k, v)| k == "stat.race" && v == "Human"));
+        assert!(all.iter().any(|(k, v)| k == "citizenship" && v == "Wehnimer's Landing"));
+        assert!(all.iter().any(|(k, v)| k == "che" && v == "none"));
+    }
+
+    #[test]
+    fn test_delete_char_data_for_character() {
+        let db = Db::open(":memory:").unwrap();
+        db.set_char_data("Ondreian", "GS3", "stat.race", "Human").unwrap();
+        db.set_char_data("Ondreian", "GS3", "skill.edged_weapons", "30").unwrap();
+        db.set_char_data("OtherChar", "GS3", "stat.race", "Elf").unwrap();
+
+        db.delete_char_data_for_character("Ondreian", "GS3").unwrap();
+
+        let all = db.get_all_char_data("Ondreian", "GS3").unwrap();
+        assert_eq!(all.len(), 0);
+        let other = db.get_all_char_data("OtherChar", "GS3").unwrap();
+        assert_eq!(other.len(), 1);
     }
 }
