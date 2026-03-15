@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [features]
 default = ["login-gui"]
-login-gui = ["aes-gcm", "base64", "dirs"]
+login-gui = ["aes-gcm", "dirs"]
 monitor = ["login-gui"]
 
 [dependencies]
@@ -21,7 +21,7 @@ eframe = "0.29"
 egui = "0.29"
 image = "0.25"
 aes-gcm = { version = "0.10", optional = true }
-base64 = { version = "0.22", optional = true }
+base64 = "0.22"
 dirs = { version = "5", optional = true }
 tokio = { version = "1", features = ["full"] }
 # pinned to 0.39 — API changed significantly in 0.37+; do not upgrade without testing
@@ -41,6 +41,7 @@ bytes = "1"
 notify = "6"
 reqwest = { version = "0.12", features = ["rustls-tls"] }
 sha2 = "0.10"
+sha1 = "0.10"
 semver = "1"
 regex = "1"
 
