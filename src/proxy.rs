@@ -177,40 +177,24 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
             Err(e) => tracing::warn!("Failed to open DB at {}: {e}", config.db_path),
         }
 
-        // Load spell definitions
-        let spell_path = if std::path::Path::new("data/effect-list.xml").exists() {
-            "data/effect-list.xml".to_string()
-        } else {
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_default();
-            exe_dir.join("data/effect-list.xml").to_string_lossy().into_owned()
-        };
+        // Load spell definitions from scripts_dir/data/
+        let spell_path = format!("{}/data/effect-list.xml", config.scripts_dir);
         match crate::spell_data::SpellList::load(&spell_path) {
             Ok(sl) => {
-                tracing::info!("Loaded {} spell definitions", sl.len());
+                tracing::info!("Loaded {} spell definitions from {}", sl.len(), spell_path);
                 engine.set_spell_list(std::sync::Arc::new(sl));
             }
-            Err(e) => tracing::warn!("Failed to load effect-list.xml: {e} (spell system disabled)"),
+            Err(e) => tracing::warn!("Failed to load {spell_path}: {e} (spell system disabled)"),
         }
 
-        // Load gameobj type data
-        let type_path = if std::path::Path::new("data/gameobj-data.xml").exists() {
-            "data/gameobj-data.xml".to_string()
-        } else {
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_default();
-            exe_dir.join("data/gameobj-data.xml").to_string_lossy().into_owned()
-        };
+        // Load gameobj type data from scripts_dir/data/
+        let type_path = format!("{}/data/gameobj-data.xml", config.scripts_dir);
         match crate::type_data::TypeData::load(&type_path) {
             Ok(td) => {
-                tracing::info!("Loaded gameobj type data");
+                tracing::info!("Loaded gameobj type data from {}", type_path);
                 engine.set_type_data(std::sync::Arc::new(td));
             }
-            Err(e) => tracing::warn!("Failed to load gameobj-data.xml: {e} (type data disabled)"),
+            Err(e) => tracing::warn!("Failed to load {type_path}: {e} (type data disabled)"),
         }
 
         engine.install_lua_api()?;
