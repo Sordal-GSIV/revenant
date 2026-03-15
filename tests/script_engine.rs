@@ -207,7 +207,7 @@ async fn test_script_running_returns_true_when_running() {
 }
 
 #[tokio::test]
-async fn test_lib_vars_typed_getters() {
+async fn test_lib_vars_lich_compat() {
     use revenant::db::Db;
     use tempfile::TempDir;
     let tmp = TempDir::new().unwrap();
@@ -227,35 +227,28 @@ async fn test_lib_vars_typed_getters() {
     engine.eval_lua(&format!(
         r#"
         package.path = "{}/?.lua;" .. package.path
-        local vars = require("lib/vars")
+        local Vars = require("lib/vars")
 
-        -- get with default
-        assert(vars.get("nonexistent", "fallback") == "fallback")
-        assert(vars.get("nonexistent") == nil)
+        -- set and get (Lich5 Vars compat via JSON-over-CharSettings)
+        Vars["name"] = "Korrga"
+        assert(Vars["name"] == "Korrga", "string roundtrip")
 
-        -- set and get
-        vars.set("name", "Korrga")
-        assert(vars.get("name") == "Korrga")
+        -- table roundtrip
+        Vars["config"] = {{a = 1, b = "two"}}
+        local c = Vars["config"]
+        assert(c.a == 1, "table.a")
+        assert(c.b == "two", "table.b")
 
-        -- get_string
-        vars.set("label", "hello")
-        assert(vars.get_string("label") == "hello")
-        assert(vars.get_string("missing_str", "default") == "default")
+        -- nil deletes
+        Vars["name"] = nil
+        assert(Vars["name"] == nil, "nil after delete")
 
-        -- get_number coercion
-        vars.set("delay", "1.5")
-        assert(vars.get_number("delay") == 1.5)
-        assert(vars.get_number("missing", 3.0) == 3.0)
+        -- dot syntax
+        Vars.score = 42
+        assert(Vars.score == 42, "dot syntax number")
 
-        -- get_bool coercion
-        vars.set("hunting", "true")
-        assert(vars.get_bool("hunting") == true)
-        vars.set("skin", "false")
-        assert(vars.get_bool("skin") == false)
-
-        -- unset
-        vars.unset("name")
-        assert(vars.get("name") == nil)
+        -- save is a no-op (should not error)
+        Vars.save()
         "#,
         scripts_dir
     )).await.unwrap();
