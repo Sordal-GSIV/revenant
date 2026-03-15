@@ -48,6 +48,105 @@ static SPELL_SOLO: LazyLock<Regex> = LazyLock::new(|| Regex::new(
     r"^(Bard|Cleric|Empath|Minor (?:Elemental|Mental|Spiritual)|Major (?:Elemental|Mental|Spiritual)|Paladin|Ranger|Savant|Sorcerer|Wizard)(?: Base)?\.+(\d+)"
 ).unwrap());
 
+// EXPERIENCE command
+static EXP_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+Level: \d+\s+Fame: (-?[\d,]+)$"
+).unwrap());
+static EXP_FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+Experience: [\d,]+\s+Field Exp: ([\d,]+)/([\d,]+)$"
+).unwrap());
+static EXP_ASCENSION: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+Ascension Exp: ([\d,]+)\s+Recent Deaths: [\d,]+"
+).unwrap());
+static EXP_TOTAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+Total Exp: ([\d,]+)\s+Death's Sting: (\w[\w\s]*\w)"
+).unwrap());
+static EXP_LTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+Long-Term Exp: ([\d,]+)\s+Deeds: (\d+)"
+).unwrap());
+static EXP_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+Exp (?:until lvl|to next TP): -?[\d,]+"
+).unwrap());
+
+// SOCIETY command (single-line)
+static SOCIETY_MEMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+You are a (Master|member) (?:in|of) the (Order of Voln|Council of Light|Guardians of Sunfist)(?: at (?:rank|step) (\d+))?\."
+).unwrap());
+static SOCIETY_NONE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+You are not a member of any society"
+).unwrap());
+
+// CITIZENSHIP command (single-line)
+static CITIZENSHIP_YES: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^You currently have .*? citizenship in (.*)\.(?:\s|$)"
+).unwrap());
+static CITIZENSHIP_NONE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^You don't seem to have citizenship"
+).unwrap());
+
+// PSM commands (shared format for armor/cman/feat/shield/weapon/ascension)
+static PSM_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\w+, the following (Ascension Abilities|Armor Specializations|Combat Maneuvers|Feats|Shield Specializations|Weapon Techniques) are available:"
+).unwrap());
+static PSM_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+[A-Za-z\s\-':]+\s+([a-z]+)\s+(\d+)/\d+"
+).unwrap());
+static PSM_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+Subcategory: all$"
+).unwrap());
+
+// RESOURCE command
+static RESOURCE_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^(Essence|Necrotic Energy|Lore Knowledge|Motes of Tranquility|Devotion|Nature's Grace|Grit|Luck Inspiration|Guile|Vitality): ([\d,]+)/50,000 \(Weekly\)\s+([\d,]+)/200,000 \(Total\)"
+).unwrap());
+static RESOURCE_SUFFUSED: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^Suffused (?:Essence|Necrotic Energy|Lore Knowledge|Motes of Tranquility|Devotion|Nature's Grace|Grit|Luck Inspiration|Guile|Vitality): ([\d,]+)"
+).unwrap());
+static RESOURCE_VOLN: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^Voln Favor: ([-\d,]+)"
+).unwrap());
+static RESOURCE_COVERT: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^Covert Arts Charges: ([-\d,]+)/200"
+).unwrap());
+
+// WARCRY command
+static WARCRY_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^You have learned the following War Cries:"
+).unwrap());
+static WARCRY_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s+(Bertrandt's Bellow|Yertie's Yowlp|Gerrelle's Growl|Seanette's Shout|Carn's Cry|Horland's Holler)"
+).unwrap());
+
+// PROFILE FULL command
+static PROFILE_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^PERSONAL INFORMATION$"
+).unwrap());
+static PROFILE_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^Name:\s+([\w\s]+)$"
+).unwrap());
+static PROFILE_ACCOUNT_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^Account Name:\s+([\w\d\-_]+)"
+).unwrap());
+static PROFILE_ACCOUNT_TYPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^Account Type:\s+(F2P|Standard|Premium|Platinum)"
+).unwrap());
+static PROFILE_CHE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"(?:of House of the |of House of |of House |of )(Argent Aspis|Rising Phoenix|Paupers|Arcane Masters|Brigatta|Twilight Hall|Silvergate Inn|Sovyn|Sylvanfair|Helden Hall|White Haven|Beacon Hall|Rone Academy|Willow Hall|Moonstone Abbey|Obsidian Tower|Cairnfang Manor)"
+).unwrap());
+static PROFILE_NO_HOUSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^No House affiliation"
+).unwrap());
+
+// Enhanced STAT_END to capture silver
+static STAT_END_SILVER: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^Mana:\s+-?\d+\s+Silver:\s+([\d,]+)"
+).unwrap());
+
+// Enhanced Gender/Age line to capture experience and level
+static CHAR_GENDER_AGE_FULL: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^Gender:\s+(\w+)\s+Age:\s+([\d,]+)\s+Expr:\s+([\d,]+)\s+Level:\s+(\d+)"
+).unwrap());
+
 // ── Key Normalization ───────────────────────────────────────────────────────
 
 fn normalize_key(raw: &str) -> String {
@@ -64,6 +163,11 @@ enum ParserState {
     Ready,
     InStats,
     InSkills,
+    InExperience,
+    InPSM { prefix: String },
+    InResource { had_data: bool },
+    InWarcry,
+    InProfile { verified: bool },
 }
 
 /// Infomon-style verb output parser. Parses INFO/SKILLS/SPELL command output
@@ -123,6 +227,12 @@ impl Infomon {
             ParserState::Ready => self.parse_ready(line),
             ParserState::InStats => self.parse_in_stats(line),
             ParserState::InSkills => self.parse_in_skills(line),
+            // New states — implementations added in subsequent tasks
+            ParserState::InExperience => self.parse_ready(line),
+            ParserState::InPSM { .. } => self.parse_ready(line),
+            ParserState::InResource { .. } => self.parse_ready(line),
+            ParserState::InWarcry => self.parse_ready(line),
+            ParserState::InProfile { .. } => self.parse_ready(line),
         }
     }
 
