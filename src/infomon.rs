@@ -446,6 +446,19 @@ impl Infomon {
     }
 
     fn parse_in_stats(&mut self, line: &str) {
+        // Try full Gender/Age/Expr/Level line first
+        if let Some(caps) = CHAR_GENDER_AGE_FULL.captures(line) {
+            let gender = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let age = caps.get(2).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            let expr = caps.get(3).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            let level = caps.get(4).map(|m| m.as_str()).unwrap_or("");
+            self.batch.push(("stat.gender".into(), gender.to_string()));
+            self.batch.push(("stat.age".into(), age));
+            self.batch.push(("stat.experience".into(), expr));
+            self.batch.push(("stat.level".into(), level.to_string()));
+            return;
+        }
+        // Fallback: existing simple Gender/Age check remains below
         // Check for gender/age line
         if let Some(caps) = CHAR_GENDER_AGE.captures(line) {
             let gender = caps.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -479,6 +492,14 @@ impl Infomon {
             return;
         }
 
+        // Check for stat block end + capture silver
+        if let Some(caps) = STAT_END_SILVER.captures(line) {
+            let silver = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.batch.push(("currency.silver".into(), silver));
+            self.flush_batch();
+            self.state = ParserState::Ready;
+            return;
+        }
         // Check for stat block end: "Mana: ... Silver: ..."
         if STAT_END.is_match(line) {
             self.flush_batch();
@@ -912,5 +933,28 @@ mod tests {
         assert_eq!(im.state, ParserState::Ready);
         assert_eq!(im.get("account.type"), Some("Free"));
         assert_eq!(im.get("che"), Some("none"));
+    }
+
+    #[test]
+    fn test_parse_silver_from_stat_end() {
+        let mut im = test_infomon();
+        im.parse("Name: Ondreian   Race: Human   Profession: Wizard");
+        im.parse("  Strength (STR):                    87  (12) ...   92  (16)");
+        im.parse("Mana: 150   Silver: 12,345");
+        assert_eq!(im.state, ParserState::Ready);
+        assert_eq!(im.get("currency.silver"), Some("12345"));
+    }
+
+    #[test]
+    fn test_parse_gender_age_full() {
+        let mut im = test_infomon();
+        im.parse("Name: Ondreian   Race: Human   Profession: Wizard");
+        im.parse("Gender: male   Age: 247   Expr: 87,654,321   Level: 100");
+        im.parse("Mana: 150   Silver: 0");
+        assert_eq!(im.state, ParserState::Ready);
+        assert_eq!(im.get("stat.gender"), Some("male"));
+        assert_eq!(im.get("stat.age"), Some("247"));
+        assert_eq!(im.get("stat.experience"), Some("87654321"));
+        assert_eq!(im.get("stat.level"), Some("100"));
     }
 }
