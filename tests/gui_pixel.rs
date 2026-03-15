@@ -1,4 +1,3 @@
-#[cfg(feature = "login-gui")]
 mod tests {
     use revenant::gui::map_view::{image_to_screen, pixel_to_room};
     use revenant::gui::{Marker, MarkerShape};

@@ -18,7 +18,6 @@ pub mod map;
 pub mod credentials;
 #[cfg(feature = "login-gui")]
 pub mod login;
-#[cfg(feature = "login-gui")]
 pub mod gui;
 #[cfg(feature = "monitor")]
 pub mod monitor;

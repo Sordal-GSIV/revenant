@@ -1,5 +1,3 @@
-#![cfg(feature = "login-gui")]
-
 use crate::gui::{GuiEvent, GuiState, Marker, MarkerShape, WidgetData, WidgetId, WindowId};
 use eframe::egui;
 use std::collections::HashMap;

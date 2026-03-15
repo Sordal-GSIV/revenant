@@ -1,4 +1,3 @@
-#[cfg(feature = "login-gui")]
 mod tests {
     use revenant::gui::*;
 

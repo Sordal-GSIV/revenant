@@ -1,5 +1,3 @@
-#![cfg(feature = "login-gui")]
-
 pub mod lua_api;
 pub mod renderer;
 pub mod map_view;

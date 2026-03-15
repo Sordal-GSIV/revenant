@@ -13,16 +13,16 @@ path = "src/main.rs"
 
 [features]
 default = ["login-gui"]
-login-gui = ["eframe", "egui", "aes-gcm", "base64", "dirs", "image"]
+login-gui = ["aes-gcm", "base64", "dirs"]
 monitor = ["login-gui"]
 
 [dependencies]
-eframe = { version = "0.29", optional = true }
-egui = { version = "0.29", optional = true }
+eframe = "0.29"
+egui = "0.29"
+image = "0.25"
 aes-gcm = { version = "0.10", optional = true }
 base64 = { version = "0.22", optional = true }
 dirs = { version = "5", optional = true }
-image = { version = "0.25", optional = true }
 tokio = { version = "1", features = ["full"] }
 # pinned to 0.39 — API changed significantly in 0.37+; do not upgrade without testing
 quick-xml = { version = "0.39", features = ["async-tokio"] }
