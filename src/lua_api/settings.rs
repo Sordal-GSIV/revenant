@@ -46,6 +46,36 @@ fn register_char_settings(engine: &ScriptEngine) -> LuaResult<()> {
     })?)?;
 
     t.set_metatable(Some(mt));
+
+    // list(prefix?) — returns array of {key, value} pairs with prefix stripped
+    let (db2, c2, g2) = (db.clone(), char.clone(), game.clone());
+    t.set("list", lua.create_function(move |lua, prefix: Option<String>| {
+        let prefix = prefix.unwrap_or_default();
+        let guard = db2.lock().unwrap();
+        let db = match guard.as_ref() { Some(d) => d, None => return Ok(LuaValue::Table(lua.create_table()?)) };
+        match db.list_char_settings(&c2.lock().unwrap(), &g2.lock().unwrap(), &prefix) {
+            Ok(entries) => {
+                let result = lua.create_table()?;
+                for (i, (key, value)) in entries.into_iter().enumerate() {
+                    let pair = lua.create_table()?;
+                    let display_key = if !prefix.is_empty() && key.starts_with(&prefix) {
+                        key[prefix.len()..].to_string()
+                    } else {
+                        key
+                    };
+                    pair.set(1, display_key)?;
+                    pair.set(2, value)?;
+                    result.set(i + 1, pair)?;
+                }
+                Ok(LuaValue::Table(result))
+            }
+            Err(e) => {
+                tracing::warn!("CharSettings.list error: {e}");
+                Ok(LuaValue::Table(lua.create_table()?))
+            }
+        }
+    })?)?;
+
     lua.globals().set("CharSettings", t)?;
     Ok(())
 }
@@ -85,6 +115,30 @@ fn register_user_vars(engine: &ScriptEngine) -> LuaResult<()> {
     })?)?;
 
     t.set_metatable(Some(mt));
+
+    // list() — returns array of {key, value} pairs
+    let (db2, g2) = (db.clone(), game.clone());
+    t.set("list", lua.create_function(move |lua, ()| {
+        let guard = db2.lock().unwrap();
+        let db = match guard.as_ref() { Some(d) => d, None => return Ok(LuaValue::Table(lua.create_table()?)) };
+        match db.list_user_vars(&g2.lock().unwrap()) {
+            Ok(entries) => {
+                let result = lua.create_table()?;
+                for (i, (key, value)) in entries.into_iter().enumerate() {
+                    let pair = lua.create_table()?;
+                    pair.set(1, key)?;
+                    pair.set(2, value)?;
+                    result.set(i + 1, pair)?;
+                }
+                Ok(LuaValue::Table(result))
+            }
+            Err(e) => {
+                tracing::warn!("UserVars.list error: {e}");
+                Ok(LuaValue::Table(lua.create_table()?))
+            }
+        }
+    })?)?;
+
     lua.globals().set("UserVars", t)?;
     Ok(())
 }
