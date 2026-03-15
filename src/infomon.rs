@@ -228,7 +228,7 @@ impl Infomon {
             ParserState::InStats => self.parse_in_stats(line),
             ParserState::InSkills => self.parse_in_skills(line),
             // New states — implementations added in subsequent tasks
-            ParserState::InExperience => self.parse_ready(line),
+            ParserState::InExperience => self.parse_in_experience(line),
             ParserState::InPSM { .. } => self.parse_ready(line),
             ParserState::InResource { .. } => self.parse_ready(line),
             ParserState::InWarcry => self.parse_ready(line),
@@ -262,6 +262,93 @@ impl Infomon {
             let key = format!("spell.{}", normalize_key(circle_name));
             self.cache.insert(key.clone(), ranks.to_string());
             let _ = self.db.set_char_data(&self.character, &self.game, &key, ranks);
+            return;
+        }
+
+        // Check for EXPERIENCE block start: "  Level: 100  Fame: 4,804,958"
+        if let Some(caps) = EXP_START.captures(line) {
+            self.state = ParserState::InExperience;
+            self.batch.clear();
+            let fame = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.batch.push(("experience.fame".into(), fame));
+            return;
+        }
+
+        // Check for SOCIETY member line
+        if let Some(caps) = SOCIETY_MEMBER.captures(line) {
+            let standing = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let society = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+            let rank = if standing == "Master" {
+                if society == "Order of Voln" { "26".to_string() } else { "20".to_string() }
+            } else {
+                caps.get(3).map(|m| m.as_str()).unwrap_or("0").to_string()
+            };
+            self.cache.insert("society.status".into(), society.to_string());
+            self.cache.insert("society.rank".into(), rank.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "society.status", society);
+            let _ = self.db.set_char_data(&self.character, &self.game, "society.rank", &rank);
+            return;
+        }
+
+        // Check for SOCIETY none line
+        if SOCIETY_NONE.is_match(line) {
+            self.cache.insert("society.status".into(), "None".into());
+            self.cache.insert("society.rank".into(), "0".into());
+            let _ = self.db.set_char_data(&self.character, &self.game, "society.status", "None");
+            let _ = self.db.set_char_data(&self.character, &self.game, "society.rank", "0");
+            return;
+        }
+
+        // Check for CITIZENSHIP yes line
+        if let Some(caps) = CITIZENSHIP_YES.captures(line) {
+            let town = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            self.cache.insert("citizenship".into(), town.to_string());
+            let _ = self.db.set_char_data(&self.character, &self.game, "citizenship", town);
+            return;
+        }
+
+        // Check for CITIZENSHIP none line
+        if CITIZENSHIP_NONE.is_match(line) {
+            self.cache.insert("citizenship".into(), "None".into());
+            let _ = self.db.set_char_data(&self.character, &self.game, "citizenship", "None");
+            return;
+        }
+    }
+
+    fn parse_in_experience(&mut self, line: &str) {
+        if let Some(caps) = EXP_FIELD.captures(line) {
+            let cur = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            let max = caps.get(2).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.batch.push(("experience.field_experience_current".into(), cur));
+            self.batch.push(("experience.field_experience_max".into(), max));
+            return;
+        }
+
+        if let Some(caps) = EXP_ASCENSION.captures(line) {
+            let asc = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.batch.push(("experience.ascension_experience".into(), asc));
+            return;
+        }
+
+        if let Some(caps) = EXP_TOTAL.captures(line) {
+            let total = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            let sting = caps.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+            self.batch.push(("experience.total_experience".into(), total));
+            self.batch.push(("experience.deaths_sting".into(), sting));
+            return;
+        }
+
+        if let Some(caps) = EXP_LTE.captures(line) {
+            let lte = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            let deeds = caps.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+            self.batch.push(("experience.long_term_experience".into(), lte));
+            self.batch.push(("experience.deeds".into(), deeds));
+            return;
+        }
+
+        if EXP_END.is_match(line) {
+            self.flush_batch();
+            self.state = ParserState::Ready;
             return;
         }
     }
@@ -497,5 +584,64 @@ mod tests {
 
         let spells = im.get_prefix("spell.");
         assert_eq!(spells.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_experience() {
+        let mut im = test_infomon();
+        im.parse("                  Level: 100                         Fame: 4,804,958");
+        assert_eq!(im.state, ParserState::InExperience);
+        im.parse("             Experience: 37,136,999             Field Exp: 1,350/1,010");
+        im.parse("          Ascension Exp: 4,170,132          Recent Deaths: 0");
+        im.parse("              Total Exp: 41,307,131         Death's Sting: None");
+        im.parse("          Long-Term Exp: 26,266                     Deeds: 20");
+        im.parse("          Exp until lvl: 30,000");
+        assert_eq!(im.state, ParserState::Ready);
+        assert_eq!(im.get("experience.fame"), Some("4804958"));
+        assert_eq!(im.get("experience.field_experience_current"), Some("1350"));
+        assert_eq!(im.get("experience.field_experience_max"), Some("1010"));
+        assert_eq!(im.get("experience.ascension_experience"), Some("4170132"));
+        assert_eq!(im.get("experience.total_experience"), Some("41307131"));
+        assert_eq!(im.get("experience.deaths_sting"), Some("None"));
+        assert_eq!(im.get("experience.long_term_experience"), Some("26266"));
+        assert_eq!(im.get("experience.deeds"), Some("20"));
+    }
+
+    #[test]
+    fn test_parse_society_member() {
+        let mut im = test_infomon();
+        im.parse("   You are a member in the Order of Voln at step 13.");
+        assert_eq!(im.get("society.status"), Some("Order of Voln"));
+        assert_eq!(im.get("society.rank"), Some("13"));
+    }
+
+    #[test]
+    fn test_parse_society_master() {
+        let mut im = test_infomon();
+        im.parse("   You are a Master of the Order of Voln.");
+        assert_eq!(im.get("society.status"), Some("Order of Voln"));
+        assert_eq!(im.get("society.rank"), Some("26"));
+    }
+
+    #[test]
+    fn test_parse_society_none() {
+        let mut im = test_infomon();
+        im.parse("   You are not a member of any society at this time.");
+        assert_eq!(im.get("society.status"), Some("None"));
+        assert_eq!(im.get("society.rank"), Some("0"));
+    }
+
+    #[test]
+    fn test_parse_citizenship() {
+        let mut im = test_infomon();
+        im.parse("You currently have full citizenship in Wehnimer's Landing.");
+        assert_eq!(im.get("citizenship"), Some("Wehnimer's Landing"));
+    }
+
+    #[test]
+    fn test_parse_no_citizenship() {
+        let mut im = test_infomon();
+        im.parse("You don't seem to have citizenship.");
+        assert_eq!(im.get("citizenship"), Some("None"));
     }
 }
