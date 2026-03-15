@@ -331,6 +331,19 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         })?)?;
     }
 
+    // GameObj.classify(noun, name) → type string or nil
+    // Looks up type classification from gameobj-data.xml without needing a live object.
+    {
+        let td = td_arc.clone();
+        game_obj_tbl.raw_set("classify", lua.create_function(move |_, (noun, name): (String, String)| {
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner());
+            match type_data.as_ref() {
+                Some(td) => Ok(td.get_type(&noun, &name).map(|s| s.to_string())),
+                None => Ok(None),
+            }
+        })?)?;
+    }
+
     // Metatable: GameObj["key"] — lookup by ID, noun, or name substring
     {
         let go = go_arc.clone();
