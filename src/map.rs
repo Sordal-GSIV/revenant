@@ -124,6 +124,20 @@ impl MapData {
         if path.is_empty() { None } else { Some(path) }
     }
 
+    /// Resolve a map UID to room IDs.
+    /// UIDs can be stored as a number, string, or array in `MapRoom.uid`.
+    pub fn ids_from_uid(&self, uid: u32) -> Vec<u32> {
+        self.rooms.values()
+            .filter(|r| match &r.uid {
+                Some(serde_json::Value::Number(n)) => n.as_u64() == Some(uid as u64),
+                Some(serde_json::Value::Array(arr)) => arr.iter().any(|v| v.as_u64() == Some(uid as u64)),
+                Some(serde_json::Value::String(s)) => s.parse::<u32>().ok() == Some(uid),
+                _ => false,
+            })
+            .map(|r| r.id)
+            .collect()
+    }
+
     /// Return sorted list of all room IDs.
     pub fn room_ids(&self) -> Vec<u32> {
         let mut ids: Vec<u32> = self.rooms.keys().copied().collect();
@@ -184,6 +198,128 @@ impl MapData {
                             path.reverse();
                             return Some((dest_id, path));
                         }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Find ALL rooms with a given tag, sorted by distance from `from_id`.
+    /// Runs full Dijkstra, then collects tagged rooms sorted by cost.
+    /// Returns Vec of (room_id, path_commands).
+    pub fn find_all_nearest_by_tag(&self, from_id: u32, tag: &str) -> Vec<(u32, Vec<String>)> {
+        if !self.rooms.contains_key(&from_id) { return vec![]; }
+        let tag_lower = tag.to_lowercase();
+
+        // Run full Dijkstra
+        let mut dist: HashMap<u32, (f64, u32, String)> = HashMap::new();
+        let mut heap: BinaryHeap<MinHeapEntry> = BinaryHeap::new();
+
+        dist.insert(from_id, (0.0, from_id, String::new()));
+        heap.push(MinHeapEntry { cost: 0.0, room_id: from_id });
+
+        while let Some(MinHeapEntry { cost, room_id }) = heap.pop() {
+            if let Some(&(best, _, _)) = dist.get(&room_id) {
+                if cost > best { continue; }
+            }
+            let room = match self.rooms.get(&room_id) { Some(r) => r, None => continue };
+            for (dest_str, cmd) in &room.wayto {
+                let dest_id: u32 = match dest_str.parse() { Ok(v) => v, Err(_) => continue };
+                let edge_cost = match room.timeto.get(dest_str).copied().flatten() {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let new_cost = cost + edge_cost;
+                let better = dist.get(&dest_id).is_none_or(|&(c, _, _)| new_cost < c);
+                if better {
+                    dist.insert(dest_id, (new_cost, room_id, cmd.clone()));
+                    heap.push(MinHeapEntry { cost: new_cost, room_id: dest_id });
+                }
+            }
+        }
+
+        // Collect all tagged rooms with their costs
+        let mut tagged: Vec<(u32, f64)> = Vec::new();
+        for (&room_id, &(cost, _, _)) in &dist {
+            if let Some(room) = self.rooms.get(&room_id) {
+                if room.tags.iter().any(|t| t.to_lowercase() == tag_lower) {
+                    tagged.push((room_id, cost));
+                }
+            }
+        }
+        tagged.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+
+        // Reconstruct paths
+        tagged.iter().map(|&(room_id, _)| {
+            if room_id == from_id {
+                return (room_id, vec![]);
+            }
+            let mut path = vec![];
+            let mut cur = room_id;
+            loop {
+                if let Some((_, prev, ref cmd)) = dist.get(&cur) {
+                    if *prev == cur { break; }
+                    path.push(cmd.clone());
+                    cur = *prev;
+                } else {
+                    break;
+                }
+            }
+            path.reverse();
+            (room_id, path)
+        }).collect()
+    }
+
+    /// Find the nearest room from a list of target room IDs using Dijkstra.
+    /// Stops at the first target hit.
+    /// Returns (room_id, path_commands) or None if no target is reachable.
+    pub fn find_nearest_in_list(&self, from_id: u32, targets: &[u32]) -> Option<(u32, Vec<String>)> {
+        if !self.rooms.contains_key(&from_id) { return None; }
+        if targets.is_empty() { return None; }
+
+        let target_set: std::collections::HashSet<u32> = targets.iter().copied().collect();
+
+        // Check if we're already at a target
+        if target_set.contains(&from_id) {
+            return Some((from_id, vec![]));
+        }
+
+        let mut dist: HashMap<u32, (f64, u32, String)> = HashMap::new();
+        let mut heap: BinaryHeap<MinHeapEntry> = BinaryHeap::new();
+
+        dist.insert(from_id, (0.0, from_id, String::new()));
+        heap.push(MinHeapEntry { cost: 0.0, room_id: from_id });
+
+        while let Some(MinHeapEntry { cost, room_id }) = heap.pop() {
+            if let Some(&(best, _, _)) = dist.get(&room_id) {
+                if cost > best { continue; }
+            }
+            let room = match self.rooms.get(&room_id) { Some(r) => r, None => continue };
+            for (dest_str, cmd) in &room.wayto {
+                let dest_id: u32 = match dest_str.parse() { Ok(v) => v, Err(_) => continue };
+                let edge_cost = match room.timeto.get(dest_str).copied().flatten() {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let new_cost = cost + edge_cost;
+                let better = dist.get(&dest_id).is_none_or(|&(c, _, _)| new_cost < c);
+                if better {
+                    dist.insert(dest_id, (new_cost, room_id, cmd.clone()));
+                    heap.push(MinHeapEntry { cost: new_cost, room_id: dest_id });
+
+                    // Check if destination is a target
+                    if target_set.contains(&dest_id) {
+                        let mut path = vec![];
+                        let mut cur = dest_id;
+                        loop {
+                            let (_, prev, ref c) = dist.get(&cur)?;
+                            if *prev == cur { break; }
+                            path.push(c.clone());
+                            cur = *prev;
+                        }
+                        path.reverse();
+                        return Some((dest_id, path));
                     }
                 }
             }
