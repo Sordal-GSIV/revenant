@@ -224,9 +224,11 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 }
                 if let Err(e) = result {
                     let msg = e.to_string();
-                    tracing::error!("[script:{script_name}] error: {msg}");
-                    if let Some(hook) = error_hook.lock().unwrap().as_ref() {
-                        hook(script_name.clone(), msg);
+                    if !msg.contains("[script exit]") {
+                        tracing::error!("[script:{script_name}] error: {msg}");
+                        if let Some(hook) = error_hook.lock().unwrap().as_ref() {
+                            hook(script_name.clone(), msg);
+                        }
                     }
                 }
                 // Clean up args table to avoid unbounded growth
@@ -240,6 +242,11 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             running2.lock().unwrap().insert(name, handle);
             Ok(())
         }
+    })?)?;
+
+    // Script.exit() — cleanly exit the current script
+    t.set("exit", lua.create_function(move |_, ()| -> LuaResult<()> {
+        Err(LuaError::RuntimeError("[script exit]".into()))
     })?)?;
 
     // Script.exists(name) — check if a script file exists
