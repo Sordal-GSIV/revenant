@@ -1,6 +1,7 @@
 pub mod bounty;
 pub mod char;
 pub mod crypto;
+pub mod effects;
 pub mod familiar;
 pub mod room;
 pub mod file;
@@ -10,6 +11,7 @@ pub mod group;
 pub mod society;
 pub mod hooks;
 pub mod http;
+pub mod infomon;
 pub mod json;
 pub mod map;
 pub mod primitives;
@@ -38,6 +40,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     bounty::register(engine).map_err(|e| anyhow::anyhow!("bounty register: {e}"))?;
     society::register(engine).map_err(|e| anyhow::anyhow!("society register: {e}"))?;
     group::register(engine).map_err(|e| anyhow::anyhow!("group register: {e}"))?;
+    effects::register(engine).map_err(|e| anyhow::anyhow!("effects register: {e}"))?;
     familiar::register(engine).map_err(|e| anyhow::anyhow!("familiar register: {e}"))?;
     script::register(engine)?;
     settings::register(engine)?;
@@ -45,6 +48,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     skills::register(engine).map_err(|e| anyhow::anyhow!("skills register: {e}"))?;
     spell::register(engine).map_err(|e| anyhow::anyhow!("spell register: {e}"))?;
     spells::register(engine).map_err(|e| anyhow::anyhow!("spells register: {e}"))?;
+    infomon::register(engine).map_err(|e| anyhow::anyhow!("infomon register: {e}"))?;
     json::register(engine).map_err(|e| anyhow::anyhow!("json register: {e}"))?;
     version::register(engine).map_err(|e| anyhow::anyhow!("version register: {e}"))?;
     crate::gui::lua_api::register(engine).map_err(|e| anyhow::anyhow!("gui register: {e}"))?;

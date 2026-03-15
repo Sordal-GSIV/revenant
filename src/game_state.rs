@@ -271,6 +271,8 @@ pub struct GameState {
     pub familiar_room_title: String,
     pub familiar_room_description: String,
     pub familiar_room_exits: Vec<String>,
+
+    pub effects: std::collections::HashMap<String, std::collections::HashMap<String, Instant>>,
 }
 
 impl GameState {
@@ -381,6 +383,17 @@ impl GameState {
             }
             XmlEvent::FamiliarRoomExits { exits } => {
                 self.familiar_room_exits = exits;
+            }
+            XmlEvent::DialogClear { dialog_id } => {
+                self.effects.entry(dialog_id).or_default().clear();
+            }
+            XmlEvent::DialogEntry { dialog_id, name, duration_secs, .. } => {
+                let expiry = if duration_secs == u32::MAX {
+                    Instant::now() + Duration::from_secs(315_360_000) // ~10 years
+                } else {
+                    Instant::now() + Duration::from_secs(duration_secs as u64)
+                };
+                self.effects.entry(dialog_id).or_default().insert(name, expiry);
             }
             _ => {}
         }
