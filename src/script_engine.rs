@@ -71,7 +71,7 @@ pub struct ScriptEngine {
     /// Timestamp of the last upstream (player input) byte forwarded to the server.
     pub last_upstream_time: Arc<Mutex<std::time::Instant>>,
     /// Shared GUI state — populated by register_gui(), read by MonitorApp renderer.
-    #[cfg(feature = "monitor")]
+    #[cfg(feature = "login-gui")]
     pub gui_state: std::sync::Arc<std::sync::Mutex<crate::gui::GuiState>>,
 }
 
@@ -117,7 +117,7 @@ impl ScriptEngine {
             type_data: Arc::new(RwLock::new(None)),
             after_stance: Arc::new(Mutex::new(None)),
             last_upstream_time: Arc::new(Mutex::new(std::time::Instant::now())),
-            #[cfg(feature = "monitor")]
+            #[cfg(feature = "login-gui")]
             gui_state: std::sync::Arc::new(std::sync::Mutex::new(crate::gui::GuiState::default())),
         }
     }

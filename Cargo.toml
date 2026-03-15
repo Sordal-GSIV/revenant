@@ -12,7 +12,9 @@ name = "revenant"
 path = "src/main.rs"
 
 [features]
-monitor = ["eframe", "egui", "aes-gcm", "base64", "dirs", "image"]
+default = ["login-gui"]
+login-gui = ["eframe", "egui", "aes-gcm", "base64", "dirs", "image"]
+monitor = ["login-gui"]
 
 [dependencies]
 eframe = { version = "0.29", optional = true }

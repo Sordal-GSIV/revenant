@@ -1,4 +1,4 @@
-#![cfg(feature = "monitor")]
+#![cfg(feature = "login-gui")]
 
 use crate::credentials::CredentialStore;
 use crate::eaccess::{list_characters, CharacterEntry};

@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
 
     let config = revenant::config::Config::parse();
 
-    #[cfg(feature = "monitor")]
+    #[cfg(feature = "login-gui")]
     if config.monitor || config.account.is_none() {
         return run_with_gui(config);
     }
@@ -234,10 +234,8 @@ fn launch_game_client(config: &revenant::config::Config, session: &revenant::eac
     }
 }
 
-#[cfg(feature = "monitor")]
+#[cfg(feature = "login-gui")]
 fn run_with_gui(config: revenant::config::Config) -> anyhow::Result<()> {
-    use revenant::monitor::MonitorApp;
-
     // Show the login window first
     let login_result = show_login_window()?;
 
@@ -274,24 +272,36 @@ fn run_with_gui(config: revenant::config::Config) -> anyhow::Result<()> {
         }
     });
 
-    // Run egui monitor on main thread
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Revenant Monitor")
-            .with_inner_size([700.0, 500.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "Revenant Monitor",
-        options,
-        Box::new(move |_cc| Ok(Box::new(MonitorApp::new(engine)))),
-    )
-    .map_err(|e| anyhow::anyhow!("egui: {e}"))?;
+    // If monitor feature is enabled and --monitor flag is set, show the monitor window.
+    // Otherwise, just block on the proxy runtime (headless after login).
+    #[cfg(feature = "monitor")]
+    if resolved.monitor {
+        use revenant::monitor::MonitorApp;
+        let options = eframe::NativeOptions {
+            viewport: eframe::egui::ViewportBuilder::default()
+                .with_title("Revenant Monitor")
+                .with_inner_size([700.0, 500.0]),
+            ..Default::default()
+        };
+        eframe::run_native(
+            "Revenant Monitor",
+            options,
+            Box::new(move |_cc| Ok(Box::new(MonitorApp::new(engine)))),
+        )
+        .map_err(|e| anyhow::anyhow!("egui: {e}"))?;
+        return Ok(());
+    }
 
+    // No monitor window — block until proxy finishes
+    info!("Revenant running (no monitor window)");
+    rt.block_on(async {
+        tokio::signal::ctrl_c().await.ok();
+        info!("Shutting down");
+    });
     Ok(())
 }
 
-#[cfg(feature = "monitor")]
+#[cfg(feature = "login-gui")]
 fn show_login_window() -> anyhow::Result<revenant::login::LoginResult> {
     use revenant::login::{LoginApp, LoginResult};
     use std::sync::{Arc, Mutex};
@@ -326,13 +336,13 @@ fn show_login_window() -> anyhow::Result<revenant::login::LoginResult> {
     Ok(result)
 }
 
-#[cfg(feature = "monitor")]
+#[cfg(feature = "login-gui")]
 struct LoginAppWrapper {
     app: revenant::login::LoginApp,
     result_slot: std::sync::Arc<std::sync::Mutex<Option<revenant::login::LoginResult>>>,
 }
 
-#[cfg(feature = "monitor")]
+#[cfg(feature = "login-gui")]
 impl eframe::App for LoginAppWrapper {
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
         self.app.update(ctx, frame);

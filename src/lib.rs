@@ -14,11 +14,11 @@ pub mod spell_data;
 pub mod type_data;
 pub mod lua_api;
 pub mod map;
+#[cfg(feature = "login-gui")]
+pub mod credentials;
+#[cfg(feature = "login-gui")]
+pub mod login;
+#[cfg(feature = "login-gui")]
+pub mod gui;
 #[cfg(feature = "monitor")]
 pub mod monitor;
-#[cfg(feature = "monitor")]
-pub mod credentials;
-#[cfg(feature = "monitor")]
-pub mod login;
-#[cfg(feature = "monitor")]
-pub mod gui;

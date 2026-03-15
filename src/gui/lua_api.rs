@@ -1,4 +1,4 @@
-#![cfg(feature = "monitor")]
+#![cfg(feature = "login-gui")]
 
 use crate::gui::*;
 use crate::script_engine::ScriptEngine;

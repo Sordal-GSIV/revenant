@@ -1,4 +1,4 @@
-#![cfg(feature = "monitor")]
+#![cfg(feature = "login-gui")]
 
 pub mod lua_api;
 pub mod renderer;

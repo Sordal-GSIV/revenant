@@ -1,4 +1,4 @@
-#![cfg(feature = "monitor")]
+#![cfg(feature = "login-gui")]
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

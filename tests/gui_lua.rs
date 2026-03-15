@@ -1,4 +1,4 @@
-#[cfg(feature = "monitor")]
+#[cfg(feature = "login-gui")]
 mod tests {
     use revenant::script_engine::ScriptEngine;
     use std::sync::Arc;
