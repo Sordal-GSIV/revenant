@@ -85,6 +85,20 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     }
                     _ => t.set("uid", LuaValue::Nil)?,
                 }
+                match &r.image {
+                    Some(img) => t.set("image", img.as_str())?,
+                    None => t.set("image", LuaValue::Nil)?,
+                }
+                match &r.image_coords {
+                    Some(coords) => {
+                        let coords_t = lua.create_table()?;
+                        for (i, c) in coords.iter().enumerate() {
+                            coords_t.set(i + 1, *c)?;
+                        }
+                        t.set("image_coords", coords_t)?;
+                    }
+                    None => t.set("image_coords", LuaValue::Nil)?,
+                }
 
                 Ok(LuaValue::Table(t))
             }

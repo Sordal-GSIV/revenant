@@ -26,6 +26,10 @@ pub struct MapRoom {
     pub terrain: Option<String>,
     #[serde(default)]
     pub uid: Option<serde_json::Value>,  // string or array in the wild
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub image_coords: Option<[f64; 4]>,
 }
 
 pub struct MapData {
