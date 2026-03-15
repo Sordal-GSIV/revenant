@@ -561,3 +561,24 @@ function selectput(cmd, success, failure, timeout)
         end
     end
 end
+
+-- dothistimeout(cmd, timeout_secs, patterns) → matched line or nil
+-- Send a command, then read lines until one matches a pattern or timeout expires.
+function dothistimeout(cmd, timeout, patterns)
+    if type(patterns) == "string" then patterns = {patterns} end
+    put(cmd)
+    local start = os.time()
+    while (os.time() - start) < timeout do
+        local line = get_noblock()
+        if line then
+            for _, pat in ipairs(patterns) do
+                if string.find(line, pat) then
+                    return line
+                end
+            end
+        else
+            pause(0.1)
+        end
+    end
+    return nil
+end
