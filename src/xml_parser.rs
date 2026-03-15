@@ -62,6 +62,10 @@ pub enum XmlEvent {
     PopStream { id: String },
     /// A named stream was cleared (content reset).
     ClearStream { id: String },
+    /// A dialog (Effects panel) was cleared.
+    DialogClear { dialog_id: String },
+    /// A single entry in an effects dialog (buff, debuff, cooldown, spell).
+    DialogEntry { dialog_id: String, entry_id: String, name: String, duration_secs: u32 },
     /// Text emitted inside a named stream (bounty, society, etc.).
     StreamText { stream_id: String, text: String },
     /// Room name inside the familiar's stream.
@@ -113,6 +117,8 @@ pub struct StreamParser {
     fam_mode: FamMode,
     /// Exit links accumulated while in `FamMode::Paths`; flushed on `popStream`.
     fam_exits: Vec<String>,
+    /// Which `<dialogData id="...">` is currently open, if any.
+    current_dialog: Option<String>,
 }
 
 impl StreamParser {
@@ -126,6 +132,7 @@ impl StreamParser {
             current_stream: None,
             fam_mode: FamMode::None,
             fam_exits: Vec::new(),
+            current_dialog: None,
         }
     }
 
@@ -188,6 +195,9 @@ impl StreamParser {
                 }
                 "inv" => {
                     self.current_inv_container = None;
+                }
+                "dialogData" => {
+                    self.current_dialog = None;
                 }
                 _ => {}
             }
@@ -254,6 +264,22 @@ impl StreamParser {
                     }
                     _ => events.push(ev),
                 }
+            } else if let Some(ref dialog_id) = self.current_dialog {
+                if tag_name_sc == "progressBar" {
+                    let attrs = attrs_from_xml(&xml);
+                    let text = attr(&attrs, "text").unwrap_or_default();
+                    let time_str = attr(&attrs, "time").unwrap_or_default();
+                    let secs = parse_time_to_secs(&time_str);
+                    let id = attr(&attrs, "id").unwrap_or_default();
+                    events.push(XmlEvent::DialogEntry {
+                        dialog_id: dialog_id.clone(),
+                        entry_id: id,
+                        name: text,
+                        duration_secs: secs,
+                    });
+                } else {
+                    events.push(XmlEvent::Unknown { tag: tag_name_sc.to_string() });
+                }
             } else {
                 let tag = inner.split_whitespace().next().unwrap_or("").to_string();
                 events.push(XmlEvent::Unknown { tag });
@@ -316,6 +342,15 @@ impl StreamParser {
                             self.in_bold = false;
                         }
                     }
+                }
+                "dialogData" => {
+                    let xml = format!("<{}/>", inner);
+                    let attrs = attrs_from_xml(&xml);
+                    let id = attr(&attrs, "id").unwrap_or_default();
+                    if attr(&attrs, "clear").as_deref() == Some("t") {
+                        events.push(XmlEvent::DialogClear { dialog_id: id.clone() });
+                    }
+                    self.current_dialog = Some(id);
                 }
                 "b" => {
                     self.in_bold = true;
@@ -561,6 +596,21 @@ fn parse_vital(attrs: &Attrs) -> (u32, Option<u32>) {
         }
     }
     (value, None)
+}
+
+/// Parse a time string like "HH:MM:SS" into total seconds.
+/// Returns `u32::MAX` for "Indefinite" or empty strings.
+fn parse_time_to_secs(time: &str) -> u32 {
+    if time == "Indefinite" || time.is_empty() { return u32::MAX; }
+    let parts: Vec<&str> = time.split(':').collect();
+    if parts.len() == 3 {
+        let h: u32 = parts[0].parse().unwrap_or(0);
+        let m: u32 = parts[1].parse().unwrap_or(0);
+        let s: u32 = parts[2].parse().unwrap_or(0);
+        h * 3600 + m * 60 + s
+    } else {
+        0
+    }
 }
 
 fn parse_empty_tag(tag: &str, attrs: &Attrs) -> Option<XmlEvent> {
