@@ -111,8 +111,9 @@ pub enum GuiEvent {
     CheckboxChanged { window_id: WindowId, widget_id: WidgetId, value: bool },
     InputChanged    { window_id: WindowId, widget_id: WidgetId, text: String },
     InputSubmitted  { window_id: WindowId, widget_id: WidgetId, text: String },
-    MapClicked      { window_id: WindowId, widget_id: WidgetId, room_id: u32 },
-    WindowClosed    { window_id: WindowId },
+    MapClicked          { window_id: WindowId, widget_id: WidgetId, room_id: u32 },
+    TableRowSelected    { window_id: WindowId, widget_id: WidgetId, row_index: usize },
+    WindowClosed        { window_id: WindowId },
 }
 
 impl GuiEvent {
@@ -123,8 +124,9 @@ impl GuiEvent {
             GuiEvent::CheckboxChanged { widget_id, .. } => Some(*widget_id),
             GuiEvent::InputChanged    { widget_id, .. } => Some(*widget_id),
             GuiEvent::InputSubmitted  { widget_id, .. } => Some(*widget_id),
-            GuiEvent::MapClicked      { widget_id, .. } => Some(*widget_id),
-            GuiEvent::WindowClosed    { .. }            => None,
+            GuiEvent::MapClicked          { widget_id, .. } => Some(*widget_id),
+            GuiEvent::TableRowSelected    { widget_id, .. } => Some(*widget_id),
+            GuiEvent::WindowClosed        { .. }            => None,
         }
     }
 
@@ -135,8 +137,9 @@ impl GuiEvent {
             GuiEvent::CheckboxChanged { window_id, .. } => *window_id,
             GuiEvent::InputChanged    { window_id, .. } => *window_id,
             GuiEvent::InputSubmitted  { window_id, .. } => *window_id,
-            GuiEvent::MapClicked      { window_id, .. } => *window_id,
-            GuiEvent::WindowClosed    { window_id }     => *window_id,
+            GuiEvent::MapClicked          { window_id, .. } => *window_id,
+            GuiEvent::TableRowSelected    { window_id, .. } => *window_id,
+            GuiEvent::WindowClosed        { window_id }     => *window_id,
         }
     }
 
@@ -144,8 +147,9 @@ impl GuiEvent {
     pub fn wait_event_type(&self) -> Option<WaitEventType> {
         match self {
             GuiEvent::ButtonClicked   { .. } => Some(WaitEventType::Click),
-            GuiEvent::MapClicked      { .. } => Some(WaitEventType::Click),
-            GuiEvent::CheckboxChanged { .. } => Some(WaitEventType::Change),
+            GuiEvent::MapClicked          { .. } => Some(WaitEventType::Click),
+            GuiEvent::TableRowSelected    { .. } => Some(WaitEventType::Click),
+            GuiEvent::CheckboxChanged     { .. } => Some(WaitEventType::Change),
             GuiEvent::InputChanged    { .. } => Some(WaitEventType::Change),
             GuiEvent::InputSubmitted  { .. } => Some(WaitEventType::Submit),
             GuiEvent::WindowClosed    { .. } => None,
@@ -165,8 +169,9 @@ impl GuiEvent {
             GuiEvent::CheckboxChanged { value, .. }     => Ok(LuaValue::Boolean(*value)),
             GuiEvent::InputChanged    { text, .. }      => Ok(LuaValue::String(lua.create_string(text)?)),
             GuiEvent::InputSubmitted  { text, .. }      => Ok(LuaValue::String(lua.create_string(text)?)),
-            GuiEvent::MapClicked      { room_id, .. }   => Ok(LuaValue::Integer(*room_id as i64)),
-            GuiEvent::WindowClosed    { .. }            => Ok(LuaValue::Nil),
+            GuiEvent::MapClicked          { room_id, .. }    => Ok(LuaValue::Integer(*room_id as i64)),
+            GuiEvent::TableRowSelected    { row_index, .. }  => Ok(LuaValue::Integer(*row_index as i64)),
+            GuiEvent::WindowClosed        { .. }             => Ok(LuaValue::Nil),
         }
     }
 }
