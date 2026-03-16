@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [features]
 default = ["login-gui"]
-login-gui = ["aes-gcm", "dirs"]
+login-gui = ["aes-gcm"]
 monitor = ["login-gui"]
 
 [dependencies]
@@ -22,7 +22,9 @@ egui = "0.33"
 image = "0.25"
 aes-gcm = { version = "0.10", optional = true }
 base64 = "0.22"
-dirs = { version = "5", optional = true }
+dirs = "5"
+egui_theme = { path = "../../egui_test/egui_theme" }
+toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 # pinned to 0.39 — API changed significantly in 0.37+; do not upgrade without testing
 quick-xml = { version = "0.39", features = ["async-tokio"] }

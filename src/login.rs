@@ -56,6 +56,7 @@ pub struct LoginResult {
     pub custom_launch: Option<String>,
     pub custom_launch_dir: Option<String>,
     pub session: Option<crate::eaccess::Session>,
+    pub theme: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,6 +153,10 @@ pub struct LoginApp {
     add_acct_tx: SyncSender<Result<Vec<CharacterEntry>, String>>,
     add_acct_rx: Receiver<Result<Vec<CharacterEntry>, String>>,
 
+    // ── Theme ─────────────────────────────────────────────────────────
+    theme_config: crate::theme_config::ThemeConfig,
+    theme_applied: bool,
+
     // ── Result ────────────────────────────────────────────────────────
     pub result: Option<LoginResult>,
 }
@@ -207,6 +212,8 @@ impl LoginApp {
             add_acct_fetching: false,
             add_acct_tx,
             add_acct_rx,
+            theme_config: crate::theme_config::ThemeConfig::load(),
+            theme_applied: false,
             result: None,
         }
     }
@@ -251,6 +258,11 @@ impl LoginApp {
 
 impl eframe::App for LoginApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.theme_applied {
+            self.theme_config.to_theme().apply(ctx);
+            self.theme_applied = true;
+        }
+
         // Poll play auth result
         if let Ok(res) = self.play_rx.try_recv() {
             self.play_state = PlayState::Idle;
@@ -266,6 +278,7 @@ impl eframe::App for LoginApp {
                             custom_launch: pending.custom_launch,
                             custom_launch_dir: pending.custom_launch_dir,
                             session: Some(session),
+                            theme: self.theme_config.theme.clone(),
                         });
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -355,6 +368,29 @@ impl eframe::App for LoginApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Revenant — Login");
             ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Theme:").small());
+                for (key, label) in [("slate", "Slate"), ("ember", "Ember"), ("fantasy", "Fantasy")] {
+                    let is_active = self.theme_config.theme == key;
+                    if is_active {
+                        egui_theme::Badge::new(label)
+                            .color(egui_theme::BadgeColor::Primary)
+                            .show(ui);
+                    } else {
+                        let resp = egui_theme::Badge::new(label)
+                            .color(egui_theme::BadgeColor::Info)
+                            .outlined()
+                            .show(ui);
+                        if resp.clicked() {
+                            self.theme_config.theme = key.to_string();
+                            self.theme_config.save();
+                            self.theme_config.to_theme().apply(ctx);
+                        }
+                    }
+                }
+            });
+            ui.add_space(4.0);
 
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, MainTab::Saved, "Saved Entry");

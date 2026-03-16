@@ -14,6 +14,7 @@ pub mod spell_data;
 pub mod type_data;
 pub mod lua_api;
 pub mod map;
+pub mod theme_config;
 #[cfg(feature = "login-gui")]
 pub mod credentials;
 #[cfg(feature = "login-gui")]

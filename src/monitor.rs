@@ -6,19 +6,31 @@ use eframe::egui;
 use std::sync::Arc;
 
 pub struct MonitorApp {
-    engine:   Arc<ScriptEngine>,
-    renderer: Renderer,
+    engine:        Arc<ScriptEngine>,
+    renderer:      Renderer,
+    theme_applied: bool,
+    theme_name:    String,
 }
 
 impl MonitorApp {
-    pub fn new(engine: Arc<ScriptEngine>) -> Self {
+    pub fn new(engine: Arc<ScriptEngine>, theme_name: &str) -> Self {
         let renderer = Renderer::new(engine.gui_state.clone());
-        Self { engine, renderer }
+        Self { engine, renderer, theme_applied: false, theme_name: theme_name.to_string() }
     }
 }
 
 impl eframe::App for MonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.theme_applied {
+            let config = crate::theme_config::ThemeConfig { theme: self.theme_name.clone() };
+            config.to_theme().apply(ctx);
+            self.theme_applied = true;
+        }
+
+        let palette = egui_theme::palette_from_ctx(ctx);
+        let style = egui_theme::style_from_ctx(ctx);
+        let vitals = &style.vitals_colors;
+
         // Repaint every 250ms even with no input
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
 
@@ -33,10 +45,10 @@ impl eframe::App for MonitorApp {
             if let Some(ref gs_arc) = gs_arc {
                 let gs = gs_arc.read().unwrap_or_else(|e| e.into_inner());
                 ui.horizontal(|ui| {
-                    add_bar(ui, "❤", gs.health, gs.max_health, egui::Color32::from_rgb(180, 40, 40));
-                    add_bar(ui, "✦", gs.mana, gs.max_mana, egui::Color32::from_rgb(60, 100, 200));
-                    add_bar(ui, "☯", gs.spirit, gs.max_spirit, egui::Color32::from_rgb(150, 80, 200));
-                    add_bar(ui, "⚡", gs.stamina, gs.max_stamina, egui::Color32::from_rgb(200, 140, 20));
+                    add_bar(ui, "❤", gs.health, gs.max_health, vitals.health);
+                    add_bar(ui, "✦", gs.mana, gs.max_mana, vitals.mana);
+                    add_bar(ui, "☯", gs.spirit, gs.max_spirit, vitals.spirit);
+                    add_bar(ui, "⚡", gs.stamina, gs.max_stamina, vitals.stamina);
                 });
             } else {
                 ui.label("No client connected");
@@ -48,13 +60,13 @@ impl eframe::App for MonitorApp {
             if let Some(ref gs_arc) = gs_arc {
                 let gs = gs_arc.read().unwrap_or_else(|e| e.into_inner());
                 ui.horizontal(|ui| {
-                    indicator(ui, "BLEEDING", gs.bleeding, egui::Color32::RED);
-                    indicator(ui, "STUNNED", gs.stunned, egui::Color32::YELLOW);
-                    indicator(ui, "DEAD", gs.dead, egui::Color32::DARK_RED);
-                    indicator(ui, "SLEEPING", gs.sleeping, egui::Color32::from_rgb(100, 100, 200));
-                    indicator(ui, "PRONE", gs.prone, egui::Color32::GRAY);
-                    indicator(ui, "SITTING", gs.sitting, egui::Color32::GRAY);
-                    indicator(ui, "KNEELING", gs.kneeling, egui::Color32::GRAY);
+                    indicator(ui, "BLEEDING", gs.bleeding, palette.error, palette.border);
+                    indicator(ui, "STUNNED", gs.stunned, palette.warning, palette.border);
+                    indicator(ui, "DEAD", gs.dead, vitals.dead, palette.border);
+                    indicator(ui, "SLEEPING", gs.sleeping, palette.info, palette.border);
+                    indicator(ui, "PRONE", gs.prone, palette.text_muted, palette.border);
+                    indicator(ui, "SITTING", gs.sitting, palette.text_muted, palette.border);
+                    indicator(ui, "KNEELING", gs.kneeling, palette.text_muted, palette.border);
 
                     let rt = gs.roundtime();
                     if rt > 0.0 {
@@ -63,7 +75,7 @@ impl eframe::App for MonitorApp {
                         ui.add(egui::ProgressBar::new((rt / 10.0_f64).min(1.0) as f32)
                             .text(format!("{rt:.1}s"))
                             .desired_width(80.0)
-                            .fill(egui::Color32::from_rgb(200, 100, 0)));
+                            .fill(palette.warning));
                     }
                 });
             }
@@ -133,7 +145,7 @@ impl eframe::App for MonitorApp {
                     for line in &respond {
                         ui.monospace(
                             egui::RichText::new(line.as_str())
-                                .color(egui::Color32::from_rgb(100, 220, 100))
+                                .color(palette.success)
                         );
                     }
                 });
@@ -153,9 +165,9 @@ fn add_bar(ui: &mut egui::Ui, icon: &str, value: u32, max: u32, color: egui::Col
         .fill(color));
 }
 
-fn indicator(ui: &mut egui::Ui, label: &str, active: bool, color: egui::Color32) {
+fn indicator(ui: &mut egui::Ui, label: &str, active: bool, color: egui::Color32, inactive_color: egui::Color32) {
     let text = egui::RichText::new(label)
-        .color(if active { color } else { egui::Color32::DARK_GRAY })
+        .color(if active { color } else { inactive_color })
         .strong();
     ui.label(text);
 }
