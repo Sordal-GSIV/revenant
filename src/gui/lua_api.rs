@@ -8,19 +8,21 @@ use tokio::sync::{mpsc, oneshot};
 // ── Callback state (tokio thread only) ───────────────────────────────────────
 
 pub struct GuiCallbacks {
-    pub widget_callbacks:  HashMap<WidgetId, LuaFunction>,
-    pub submit_callbacks:  HashMap<WidgetId, LuaFunction>, // InputSubmitted events
-    pub window_callbacks:  HashMap<WindowId, LuaFunction>,
+    pub widget_callbacks:       HashMap<WidgetId, LuaFunction>,
+    pub submit_callbacks:       HashMap<WidgetId, LuaFunction>, // InputSubmitted events
+    pub window_callbacks:       HashMap<WindowId, LuaFunction>,
+    pub double_click_callbacks: HashMap<WidgetId, LuaFunction>,
     pub waiters: HashMap<WaitKey, oneshot::Sender<Option<LuaValue>>>,
 }
 
 impl GuiCallbacks {
     pub fn new() -> Self {
         Self {
-            widget_callbacks:  HashMap::new(),
-            submit_callbacks:  HashMap::new(),
-            window_callbacks:  HashMap::new(),
-            waiters:           HashMap::new(),
+            widget_callbacks:       HashMap::new(),
+            submit_callbacks:       HashMap::new(),
+            window_callbacks:       HashMap::new(),
+            double_click_callbacks: HashMap::new(),
+            waiters:                HashMap::new(),
         }
     }
 }
@@ -51,6 +53,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     register_window_ctor(lua, &gui_table, gui_state.clone(), callbacks.clone())?;
     register_widget_ctors(lua, &gui_table, gui_state.clone(), callbacks.clone())?;
     register_map_view_ctor(lua, &gui_table, gui_state.clone(), callbacks.clone())?;
+    register_advanced_widget_ctors(lua, &gui_table, gui_state.clone(), callbacks.clone())?;
     register_palette(lua, &gui_table, gui_state.clone())?;
     register_wait(lua, &gui_table, callbacks.clone())?;
 
@@ -755,6 +758,295 @@ fn register_map_view_ctor(
     Ok(())
 }
 
+// ── Advanced widget constructors (split_view, editable_combo, password_meter, side_tab_bar, tree_view) ──
+
+fn register_advanced_widget_ctors(
+    lua: &mlua::Lua,
+    gui: &LuaTable,
+    gs: Arc<Mutex<GuiState>>,
+    cbs: Arc<Mutex<GuiCallbacks>>,
+) -> LuaResult<()> {
+    // Gui.split_view(opts)
+    {
+        let gs2 = gs.clone();
+        gui.set("split_view", lua.create_function(move |lua, opts: Option<LuaTable>| {
+            let direction: String = opts.as_ref().and_then(|o| o.get("direction").ok()).unwrap_or_else(|| "horizontal".to_string());
+            let fraction: f32     = opts.as_ref().and_then(|o| o.get("fraction").ok()).unwrap_or(0.5);
+            let min_frac: f32     = opts.as_ref().and_then(|o| o.get("min").ok()).unwrap_or(0.1);
+            let max_frac: f32     = opts.as_ref().and_then(|o| o.get("max").ok()).unwrap_or(0.9);
+
+            let id = next_widget_id();
+            {
+                let mut s = gs2.lock().unwrap();
+                s.widgets.insert(id, WidgetData::SplitViewWidget { direction, fraction, min_frac, max_frac });
+                s.children.insert(id, vec![0, 0]);
+            }
+            let t = make_base_widget(lua, id, gs2.clone())?;
+
+            // set_first(widget)
+            let gs3 = gs2.clone();
+            t.set("set_first", lua.create_function(move |_, (_self, child): (LuaValue, LuaTable)| {
+                let child_id: WidgetId = child.get("_id")?;
+                let mut s = gs3.lock().unwrap();
+                let kids = s.children.entry(id).or_insert_with(|| vec![0, 0]);
+                if kids.is_empty() { kids.push(0); }
+                kids[0] = child_id;
+                s.dirty = true;
+                Ok(())
+            })?)?;
+
+            // set_second(widget)
+            let gs3 = gs2.clone();
+            t.set("set_second", lua.create_function(move |_, (_self, child): (LuaValue, LuaTable)| {
+                let child_id: WidgetId = child.get("_id")?;
+                let mut s = gs3.lock().unwrap();
+                let kids = s.children.entry(id).or_insert_with(|| vec![0, 0]);
+                while kids.len() < 2 { kids.push(0); }
+                kids[1] = child_id;
+                s.dirty = true;
+                Ok(())
+            })?)?;
+
+            Ok(t)
+        })?)?;
+    }
+
+    // Gui.editable_combo(opts)
+    {
+        let gs2 = gs.clone();
+        let cbs2 = cbs.clone();
+        gui.set("editable_combo", lua.create_function(move |lua, opts: Option<LuaTable>| {
+            let text: String    = opts.as_ref().and_then(|o| o.get("text").ok()).unwrap_or_default();
+            let hint: String    = opts.as_ref().and_then(|o| o.get("hint").ok()).unwrap_or_default();
+            let options: Vec<String> = opts.as_ref()
+                .and_then(|o| o.get::<LuaTable>("options").ok())
+                .map(|tbl| {
+                    let len = tbl.len().unwrap_or(0);
+                    (1..=len).filter_map(|i| tbl.get::<String>(i).ok()).collect()
+                })
+                .unwrap_or_default();
+
+            let id = next_widget_id();
+            gs2.lock().unwrap().widgets.insert(id, WidgetData::EditableCombo { text, options, hint });
+            let t = make_base_widget(lua, id, gs2.clone())?;
+
+            // on_change(fn)
+            let cbs3 = cbs2.clone();
+            t.set("on_change", lua.create_function(move |_, (_self, cb): (LuaValue, LuaFunction)| {
+                cbs3.lock().unwrap().widget_callbacks.insert(id, cb);
+                Ok(())
+            })?)?;
+
+            // get_text()
+            let gs3 = gs2.clone();
+            t.set("get_text", lua.create_function(move |_, _self: LuaValue| {
+                let s = gs3.lock().unwrap();
+                if let Some(WidgetData::EditableCombo { text, .. }) = s.widgets.get(&id) {
+                    Ok(text.clone())
+                } else {
+                    Ok(String::new())
+                }
+            })?)?;
+
+            // set_text(str)
+            let gs3 = gs2.clone();
+            t.set("set_text", lua.create_function(move |_, (_self, v): (LuaValue, String)| {
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::EditableCombo { text, .. }) = s.widgets.get_mut(&id) {
+                    *text = v;
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+
+            // set_options(opts)
+            let gs3 = gs2.clone();
+            t.set("set_options", lua.create_function(move |_, (_self, tbl): (LuaValue, LuaTable)| {
+                let len = tbl.len()?;
+                let new_opts: Vec<String> = (1..=len).filter_map(|i| tbl.get::<String>(i).ok()).collect();
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::EditableCombo { options, .. }) = s.widgets.get_mut(&id) {
+                    *options = new_opts;
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+
+            Ok(t)
+        })?)?;
+    }
+
+    // Gui.password_meter()
+    {
+        let gs2 = gs.clone();
+        gui.set("password_meter", lua.create_function(move |lua, ()| {
+            let id = next_widget_id();
+            gs2.lock().unwrap().widgets.insert(id, WidgetData::PasswordMeter { password: String::new() });
+            let t = make_base_widget(lua, id, gs2.clone())?;
+
+            // set_password(str)
+            let gs3 = gs2.clone();
+            t.set("set_password", lua.create_function(move |_, (_self, v): (LuaValue, String)| {
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::PasswordMeter { password }) = s.widgets.get_mut(&id) {
+                    *password = v;
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+
+            Ok(t)
+        })?)?;
+    }
+
+    // Gui.side_tab_bar(tabs, opts)
+    {
+        let gs2 = gs.clone();
+        let cbs2 = cbs.clone();
+        gui.set("side_tab_bar", lua.create_function(move |lua, (tabs_lua, opts): (LuaTable, Option<LuaTable>)| {
+            let tabs: Vec<String> = (1..=tabs_lua.len()?)
+                .map(|i| tabs_lua.get::<String>(i))
+                .collect::<LuaResult<Vec<_>>>()?;
+            let tab_width: f32 = opts.as_ref().and_then(|o| o.get("tab_width").ok()).unwrap_or(120.0);
+            let tab_count = tabs.len();
+            let id = next_widget_id();
+            {
+                let mut s = gs2.lock().unwrap();
+                s.widgets.insert(id, WidgetData::SideTabView { tabs, selected: 0, tab_width });
+                s.children.insert(id, vec![0; tab_count]);
+            }
+            let t = make_base_widget(lua, id, gs2.clone())?;
+
+            // set_tab_content(index, widget) — 1-based
+            let gs3 = gs2.clone();
+            t.set("set_tab_content", lua.create_function(move |_, (_self, index, child): (LuaValue, usize, LuaTable)| {
+                let child_id: WidgetId = child.get("_id")?;
+                let mut s = gs3.lock().unwrap();
+                let children = s.children.entry(id).or_default();
+                if index > children.len() {
+                    children.resize(index, 0);
+                }
+                children[index - 1] = child_id;
+                s.dirty = true;
+                Ok(())
+            })?)?;
+
+            // on_change(fn)
+            let cbs3 = cbs2.clone();
+            t.set("on_change", lua.create_function(move |_, (_self, cb): (LuaValue, LuaFunction)| {
+                cbs3.lock().unwrap().widget_callbacks.insert(id, cb);
+                Ok(())
+            })?)?;
+
+            Ok(t)
+        })?)?;
+    }
+
+    // Gui.tree_view(opts)
+    {
+        let gs2 = gs.clone();
+        let cbs2 = cbs.clone();
+        gui.set("tree_view", lua.create_function(move |lua, opts: LuaTable| {
+            // Parse columns
+            let cols_lua: LuaTable = opts.get("columns")?;
+            let col_count = cols_lua.len()?;
+            let mut columns: Vec<egui_theme::TreeColumn> = Vec::new();
+            for i in 1..=col_count {
+                let col_tbl: LuaTable = cols_lua.get(i)?;
+                let label: String = col_tbl.get("label").unwrap_or_default();
+                let width: Option<f32> = col_tbl.get("width").ok();
+                let sortable: bool = col_tbl.get("sortable").unwrap_or(false);
+                columns.push(egui_theme::TreeColumn { label, width, sortable });
+            }
+
+            // Parse rows recursively
+            let rows_lua: LuaTable = opts.get("rows").unwrap_or_else(|_| lua.create_table().unwrap());
+            let rows = parse_tree_rows(&rows_lua)?;
+
+            let id = next_widget_id();
+            gs2.lock().unwrap().widgets.insert(id, WidgetData::TreeViewWidget {
+                columns,
+                rows,
+                selected: None,
+                sort_column: None,
+                sort_ascending: true,
+            });
+            let t = make_base_widget(lua, id, gs2.clone())?;
+
+            // on_click(fn)
+            let cbs3 = cbs2.clone();
+            t.set("on_click", lua.create_function(move |_, (_self, cb): (LuaValue, LuaFunction)| {
+                cbs3.lock().unwrap().widget_callbacks.insert(id, cb);
+                Ok(())
+            })?)?;
+
+            // on_double_click(fn)
+            let cbs3 = cbs2.clone();
+            t.set("on_double_click", lua.create_function(move |_, (_self, cb): (LuaValue, LuaFunction)| {
+                cbs3.lock().unwrap().double_click_callbacks.insert(id, cb);
+                Ok(())
+            })?)?;
+
+            // set_rows(rows)
+            let gs3 = gs2.clone();
+            t.set("set_rows", lua.create_function(move |_, (_self, rows_tbl): (LuaValue, LuaTable)| {
+                let new_rows = parse_tree_rows(&rows_tbl)?;
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::TreeViewWidget { rows, selected, .. }) = s.widgets.get_mut(&id) {
+                    *rows = new_rows;
+                    *selected = None;
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+
+            // get_selected()
+            let gs3 = gs2.clone();
+            t.set("get_selected", lua.create_function(move |_, _self: LuaValue| {
+                let s = gs3.lock().unwrap();
+                if let Some(WidgetData::TreeViewWidget { selected, .. }) = s.widgets.get(&id) {
+                    Ok(selected.map(|i| i as i64))
+                } else {
+                    Ok(None)
+                }
+            })?)?;
+
+            Ok(t)
+        })?)?;
+    }
+
+    Ok(())
+}
+
+/// Recursively parse a Lua table of tree rows into Vec<TreeRow>.
+fn parse_tree_rows(tbl: &LuaTable) -> LuaResult<Vec<egui_theme::TreeRow>> {
+    let len = tbl.len()?;
+    let mut rows = Vec::new();
+    for i in 1..=len {
+        let row_tbl: LuaTable = tbl.get(i)?;
+
+        // cells
+        let cells: Vec<String> = if let Ok(cells_tbl) = row_tbl.get::<LuaTable>("cells") {
+            let cell_count = cells_tbl.len()?;
+            (1..=cell_count).filter_map(|j| cells_tbl.get::<String>(j).ok()).collect()
+        } else {
+            Vec::new()
+        };
+
+        // children (recursive)
+        let children: Vec<egui_theme::TreeRow> = if let Ok(children_tbl) = row_tbl.get::<LuaTable>("children") {
+            parse_tree_rows(&children_tbl)?
+        } else {
+            Vec::new()
+        };
+
+        let expanded: bool = row_tbl.get("expanded").unwrap_or(false);
+
+        rows.push(egui_theme::TreeRow { cells, children, expanded });
+    }
+    Ok(rows)
+}
+
 fn parse_color(s: &str) -> [f32; 4] {
     match s {
         "red"    => [1.0, 0.0, 0.0, 1.0],
@@ -909,9 +1201,22 @@ async fn gui_event_loop(
         // ── InputChanged: write text back to widget state ─────────────────
         if let GuiEvent::InputChanged { widget_id, ref text, .. } = event {
             let mut s = gs.lock().unwrap();
-            if let Some(WidgetData::Input { text: ref mut v, .. }) = s.widgets.get_mut(&widget_id) {
-                *v = text.clone();
-                s.dirty = true;
+            match s.widgets.get_mut(&widget_id) {
+                Some(WidgetData::Input { text: ref mut v, .. }) => {
+                    *v = text.clone();
+                    s.dirty = true;
+                }
+                Some(WidgetData::EditableCombo { text: ref mut v, .. }) => {
+                    *v = text.clone();
+                    s.dirty = true;
+                }
+                Some(WidgetData::SplitViewWidget { fraction, .. }) => {
+                    if let Ok(f) = text.parse::<f32>() {
+                        *fraction = f;
+                        s.dirty = true;
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -925,13 +1230,38 @@ async fn gui_event_loop(
             }
         }
 
-        // ── TabBar selected index writeback ───────────────────────────────
+        // ── TabBar / SideTabView selected index writeback ─────────────────
         if let GuiEvent::TabChanged { widget_id, index, .. } = &event {
             let mut s = gs.lock().unwrap();
-            if let Some(WidgetData::TabBar { selected, .. }) = s.widgets.get_mut(widget_id) {
-                *selected = *index;
+            match s.widgets.get_mut(widget_id) {
+                Some(WidgetData::TabBar { selected, .. }) => {
+                    *selected = *index;
+                    s.dirty = true;
+                }
+                Some(WidgetData::SideTabView { selected, .. }) => {
+                    *selected = *index;
+                    s.dirty = true;
+                }
+                _ => {}
+            }
+        }
+
+        // ── TreeRowClicked: update selected ──────────────────────────────
+        if let GuiEvent::TreeRowClicked { widget_id, row_index, .. } = &event {
+            let mut s = gs.lock().unwrap();
+            if let Some(WidgetData::TreeViewWidget { selected, .. }) = s.widgets.get_mut(widget_id) {
+                *selected = Some(*row_index);
                 s.dirty = true;
             }
+        }
+
+        // ── TreeRowDoubleClicked: dispatch to double_click_callbacks ──────
+        if let GuiEvent::TreeRowDoubleClicked { widget_id, row_index, .. } = &event {
+            let cb = cbs.lock().unwrap().double_click_callbacks.get(widget_id).cloned();
+            if let Some(cb) = cb {
+                let _ = cb.call_async::<()>(LuaValue::Integer(*row_index as i64)).await;
+            }
+            continue;
         }
 
         // ── ButtonClicked: check widget waiter, then window-click waiter ──
@@ -959,8 +1289,9 @@ async fn gui_event_loop(
                         GuiEvent::InputSubmitted  { text, .. }  => lua.create_string(text.as_str())
                             .map(LuaValue::String)
                             .unwrap_or(LuaValue::Nil),
-                        GuiEvent::MapClicked  { room_id, .. } => LuaValue::Integer(*room_id as i64),
-                        GuiEvent::TabChanged  { index, .. }   => LuaValue::Integer(*index as i64),
+                        GuiEvent::MapClicked         { room_id, .. }   => LuaValue::Integer(*room_id as i64),
+                        GuiEvent::TabChanged         { index, .. }     => LuaValue::Integer(*index as i64),
+                        GuiEvent::TreeRowClicked     { row_index, .. } => LuaValue::Integer(*row_index as i64),
                         _ => LuaValue::Nil,
                     };
                     tx.send(Some(lua_val)).ok();
@@ -981,14 +1312,15 @@ async fn gui_event_loop(
             };
             if let Some(cb) = cb {
                 let event_val = match &event {
-                    GuiEvent::ButtonClicked   { widget_id, .. } => LuaValue::Integer(*widget_id as i64),
-                    GuiEvent::CheckboxChanged { value, .. }     => LuaValue::Boolean(*value),
-                    GuiEvent::InputChanged    { text, .. }      |
-                    GuiEvent::InputSubmitted  { text, .. }      => lua.create_string(text.as_str())
+                    GuiEvent::ButtonClicked      { widget_id, .. }  => LuaValue::Integer(*widget_id as i64),
+                    GuiEvent::CheckboxChanged    { value, .. }      => LuaValue::Boolean(*value),
+                    GuiEvent::InputChanged       { text, .. }       |
+                    GuiEvent::InputSubmitted     { text, .. }       => lua.create_string(text.as_str())
                         .map(LuaValue::String)
                         .unwrap_or(LuaValue::Nil),
-                    GuiEvent::MapClicked { room_id, .. }        => LuaValue::Integer(*room_id as i64),
-                    GuiEvent::TabChanged { index, .. }          => LuaValue::Integer(*index as i64),
+                    GuiEvent::MapClicked         { room_id, .. }    => LuaValue::Integer(*room_id as i64),
+                    GuiEvent::TabChanged         { index, .. }      => LuaValue::Integer(*index as i64),
+                    GuiEvent::TreeRowClicked     { row_index, .. }  => LuaValue::Integer(*row_index as i64),
                     _ => LuaValue::Nil,
                 };
                 let _ = cb.call_async::<()>(event_val).await;

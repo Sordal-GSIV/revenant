@@ -97,6 +97,17 @@ pub enum WidgetData {
     Metric        { label: String, value: String, unit: Option<String>, trend: Option<f32>, icon: Option<char> },
     Toggle        { label: Option<String>, checked: bool },
     TabBar        { tabs: Vec<String>, selected: usize },
+    SplitViewWidget { direction: String, fraction: f32, min_frac: f32, max_frac: f32 },
+    EditableCombo   { text: String, options: Vec<String>, hint: String },
+    PasswordMeter   { password: String },
+    SideTabView     { tabs: Vec<String>, selected: usize, tab_width: f32 },
+    TreeViewWidget  {
+        columns:       Vec<egui_theme::TreeColumn>,
+        rows:          Vec<egui_theme::TreeRow>,
+        selected:      Option<usize>,
+        sort_column:   Option<usize>,
+        sort_ascending: bool,
+    },
 }
 
 // ── Marker ───────────────────────────────────────────────────────────────────
@@ -123,6 +134,8 @@ pub enum GuiEvent {
     MapClicked          { window_id: WindowId, widget_id: WidgetId, room_id: u32 },
     TableRowSelected    { window_id: WindowId, widget_id: WidgetId, row_index: usize },
     TabChanged          { window_id: WindowId, widget_id: WidgetId, index: usize },
+    TreeRowClicked      { window_id: WindowId, widget_id: WidgetId, row_index: usize },
+    TreeRowDoubleClicked { window_id: WindowId, widget_id: WidgetId, row_index: usize },
     WindowClosed        { window_id: WindowId },
 }
 
@@ -137,6 +150,8 @@ impl GuiEvent {
             GuiEvent::MapClicked          { widget_id, .. } => Some(*widget_id),
             GuiEvent::TableRowSelected    { widget_id, .. } => Some(*widget_id),
             GuiEvent::TabChanged          { widget_id, .. } => Some(*widget_id),
+            GuiEvent::TreeRowClicked      { widget_id, .. } => Some(*widget_id),
+            GuiEvent::TreeRowDoubleClicked { widget_id, .. } => Some(*widget_id),
             GuiEvent::WindowClosed        { .. }            => None,
         }
     }
@@ -151,6 +166,8 @@ impl GuiEvent {
             GuiEvent::MapClicked          { window_id, .. } => *window_id,
             GuiEvent::TableRowSelected    { window_id, .. } => *window_id,
             GuiEvent::TabChanged          { window_id, .. } => *window_id,
+            GuiEvent::TreeRowClicked      { window_id, .. } => *window_id,
+            GuiEvent::TreeRowDoubleClicked { window_id, .. } => *window_id,
             GuiEvent::WindowClosed        { window_id }     => *window_id,
         }
     }
@@ -164,8 +181,10 @@ impl GuiEvent {
             GuiEvent::CheckboxChanged     { .. } => Some(WaitEventType::Change),
             GuiEvent::InputChanged    { .. } => Some(WaitEventType::Change),
             GuiEvent::InputSubmitted  { .. } => Some(WaitEventType::Submit),
-            GuiEvent::TabChanged      { .. } => Some(WaitEventType::Change),
-            GuiEvent::WindowClosed    { .. } => None,
+            GuiEvent::TabChanged           { .. } => Some(WaitEventType::Change),
+            GuiEvent::TreeRowClicked       { .. } => Some(WaitEventType::Click),
+            GuiEvent::TreeRowDoubleClicked { .. } => Some(WaitEventType::Click),
+            GuiEvent::WindowClosed         { .. } => None,
         }
     }
 
@@ -184,8 +203,10 @@ impl GuiEvent {
             GuiEvent::InputSubmitted  { text, .. }      => Ok(LuaValue::String(lua.create_string(text)?)),
             GuiEvent::MapClicked          { room_id, .. }    => Ok(LuaValue::Integer(*room_id as i64)),
             GuiEvent::TableRowSelected    { row_index, .. }  => Ok(LuaValue::Integer(*row_index as i64)),
-            GuiEvent::TabChanged          { index, .. }      => Ok(LuaValue::Integer(*index as i64)),
-            GuiEvent::WindowClosed        { .. }             => Ok(LuaValue::Nil),
+            GuiEvent::TabChanged           { index, .. }     => Ok(LuaValue::Integer(*index as i64)),
+            GuiEvent::TreeRowClicked       { row_index, .. } => Ok(LuaValue::Integer(*row_index as i64)),
+            GuiEvent::TreeRowDoubleClicked { row_index, .. } => Ok(LuaValue::Integer(*row_index as i64)),
+            GuiEvent::WindowClosed         { .. }            => Ok(LuaValue::Nil),
         }
     }
 }

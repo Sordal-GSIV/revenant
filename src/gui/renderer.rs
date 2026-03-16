@@ -239,5 +239,113 @@ fn render_widget(
                 }
             }
         }
+        WidgetData::SplitViewWidget { direction, fraction, min_frac, max_frac } => {
+            let id_salt = format!("split_{}", widget_id);
+            let mut frac = *fraction;
+            let min_f = *min_frac;
+            let max_f = *max_frac;
+
+            let split = if direction.to_lowercase() == "vertical" {
+                egui_theme::SplitView::vertical(&id_salt, &mut frac)
+            } else {
+                egui_theme::SplitView::horizontal(&id_salt, &mut frac)
+            }
+            .min_fraction(min_f)
+            .max_fraction(max_f);
+
+            let kids: Vec<WidgetId> = state.children.get(&widget_id).cloned().unwrap_or_default();
+            let first_id  = kids.first().copied().unwrap_or(0);
+            let second_id = kids.get(1).copied().unwrap_or(0);
+
+            split.show(
+                ui,
+                |ui| {
+                    if first_id != 0 {
+                        render_widget(ui, first_id, state, win_id, tx, texture_cache);
+                    }
+                },
+                |ui| {
+                    if second_id != 0 {
+                        render_widget(ui, second_id, state, win_id, tx, texture_cache);
+                    }
+                },
+            );
+
+            if (frac - *fraction).abs() > f32::EPSILON {
+                tx.send(GuiEvent::InputChanged {
+                    window_id: win_id,
+                    widget_id,
+                    text: frac.to_string(),
+                }).ok();
+            }
+        }
+        WidgetData::EditableCombo { text, options, hint } => {
+            let id_salt = format!("combo_{}", widget_id);
+            let mut buf = text.clone();
+            let hint_str = hint.clone();
+            let opts_clone = options.clone();
+
+            let combo = egui_theme::EditableComboBox::new(&id_salt, &mut buf, &opts_clone)
+                .hint_text(hint_str);
+            combo.show(ui);
+
+            if buf != *text {
+                tx.send(GuiEvent::InputChanged {
+                    window_id: win_id,
+                    widget_id,
+                    text: buf,
+                }).ok();
+            }
+        }
+        WidgetData::PasswordMeter { password } => {
+            let pwd = password.clone();
+            egui_theme::PasswordStrengthMeter::new(&pwd)
+                .rule("Uppercase letter", |p| p.chars().any(|c| c.is_uppercase()))
+                .rule("Lowercase letter", |p| p.chars().any(|c| c.is_lowercase()))
+                .rule("Number", |p| p.chars().any(|c| c.is_ascii_digit()))
+                .rule("Special character", |p| p.chars().any(|c| !c.is_alphanumeric()))
+                .rule("At least 12 characters", |p| p.len() >= 12)
+                .show(ui);
+        }
+        WidgetData::SideTabView { tabs, selected, tab_width } => {
+            let id_salt = format!("sidetab_{}", widget_id);
+            let mut sel = *selected;
+            let tab_width_val = *tab_width;
+            let tab_strs: Vec<&str> = tabs.iter().map(|s| s.as_str()).collect();
+            let kids: Vec<WidgetId> = state.children.get(&widget_id).cloned().unwrap_or_default();
+            let prev_sel = sel;
+
+            egui_theme::SideTabBar::new(&id_salt, &mut sel, &tab_strs)
+                .tab_width(tab_width_val)
+                .show(ui, |ui, idx| {
+                    if let Some(kid) = kids.get(idx) {
+                        if *kid != 0 {
+                            render_widget(ui, *kid, state, win_id, tx, texture_cache);
+                        }
+                    }
+                });
+
+            if sel != prev_sel {
+                tx.send(GuiEvent::TabChanged { window_id: win_id, widget_id, index: sel }).ok();
+            }
+        }
+        WidgetData::TreeViewWidget { columns, rows, selected, sort_column, sort_ascending } => {
+            let id_salt = format!("tree_{}", widget_id);
+            let mut rows_clone = rows.clone();
+            let mut sel_clone = *selected;
+            let mut sort_col_clone = *sort_column;
+            let mut sort_asc_clone = *sort_ascending;
+
+            let resp = egui_theme::TreeView::new(&id_salt, columns, &mut rows_clone, &mut sel_clone)
+                .sort_state(&mut sort_col_clone, &mut sort_asc_clone)
+                .show(ui);
+
+            if let Some(row_index) = resp.clicked_row {
+                tx.send(GuiEvent::TreeRowClicked { window_id: win_id, widget_id, row_index }).ok();
+            }
+            if let Some(row_index) = resp.double_clicked_row {
+                tx.send(GuiEvent::TreeRowDoubleClicked { window_id: win_id, widget_id, row_index }).ok();
+            }
+        }
     }
 }
