@@ -4,6 +4,7 @@ use eframe::egui;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
+use egui_theme;
 
 // ── TextureCache ──────────────────────────────────────────────────────────────
 
@@ -118,10 +119,10 @@ fn render_widget(
             }
         }
         WidgetData::Progress { value } => {
-            ui.add(egui::ProgressBar::new(*value));
+            egui_theme::ProgressBar::new(*value).show(ui);
         }
         WidgetData::Separator => {
-            ui.separator();
+            egui_theme::ThemedSeparator::fade().show(ui);
         }
         WidgetData::Table { columns, rows } => {
             egui::Grid::new(widget_id).show(ui, |ui| {
@@ -162,6 +163,81 @@ fn render_widget(
                     }
                 }
             });
+        }
+        WidgetData::Badge { text, color, outlined } => {
+            let badge_color = match color.to_lowercase().as_str() {
+                "success"  => egui_theme::BadgeColor::Success,
+                "error"    => egui_theme::BadgeColor::Error,
+                "warning"  => egui_theme::BadgeColor::Warning,
+                "info"     => egui_theme::BadgeColor::Info,
+                _          => egui_theme::BadgeColor::Primary,
+            };
+            let mut badge = egui_theme::Badge::new(text).color(badge_color);
+            if *outlined {
+                badge = badge.outlined();
+            }
+            if badge.show(ui).clicked() {
+                tx.send(GuiEvent::ButtonClicked { window_id: win_id, widget_id }).ok();
+            }
+        }
+        WidgetData::Card { title } => {
+            let card = match title {
+                Some(t) => egui_theme::Card::new().with_title(t),
+                None    => egui_theme::Card::new(),
+            };
+            card.show(ui, |ui| {
+                if let Some(kids) = state.children.get(&widget_id) {
+                    for kid in kids.iter() {
+                        render_widget(ui, *kid, state, win_id, tx, texture_cache);
+                    }
+                }
+            });
+        }
+        WidgetData::SectionHeader { text } => {
+            egui_theme::SectionHeader::new(text).show(ui);
+        }
+        WidgetData::Metric { label, value, unit, trend, icon } => {
+            let mut m = egui_theme::Metric::new(label, value);
+            if let Some(u) = unit {
+                m = m.unit(u);
+            }
+            if let Some(t) = trend {
+                let trend_val = if *t > 0.0 {
+                    egui_theme::Trend::Up
+                } else if *t < 0.0 {
+                    egui_theme::Trend::Down
+                } else {
+                    egui_theme::Trend::Neutral
+                };
+                m = m.trend(trend_val);
+            }
+            if let Some(ch) = icon {
+                m = m.icon(*ch);
+            }
+            m.show(ui);
+        }
+        WidgetData::Toggle { label, checked } => {
+            let mut v = *checked;
+            let mut toggle = egui_theme::Toggle::new(&mut v);
+            if let Some(lbl) = label {
+                toggle = toggle.label(lbl);
+            }
+            if toggle.show(ui).changed() {
+                tx.send(GuiEvent::CheckboxChanged { window_id: win_id, widget_id, value: v }).ok();
+            }
+        }
+        WidgetData::TabBar { tabs, selected } => {
+            let mut sel = *selected;
+            let tab_strs: Vec<&str> = tabs.iter().map(|s| s.as_str()).collect();
+            if egui_theme::TabBar::new(&mut sel, &tab_strs).show(ui).changed() {
+                tx.send(GuiEvent::TabChanged { window_id: win_id, widget_id, index: sel }).ok();
+            }
+            // Render children for the selected tab
+            if let Some(kids) = state.children.get(&widget_id) {
+                if let Some(kid) = kids.get(*selected) {
+                    render_widget(ui, *kid, state, win_id, tx, texture_cache);
+                }
+            }
         }
     }
 }

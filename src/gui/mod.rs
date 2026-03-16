@@ -36,6 +36,8 @@ pub struct GuiState {
     pub event_tx: Option<UnboundedSender<GuiEvent>>,
     /// Set true when any mutation occurs; renderer clears after processing.
     pub dirty: bool,
+    /// Snapshot of the active egui_theme palette, set by the renderer each frame.
+    pub palette_snapshot: Option<egui_theme::ColorPalette>,
 }
 
 impl Default for GuiState {
@@ -45,9 +47,10 @@ impl Default for GuiState {
             widgets:          HashMap::new(),
             children:         HashMap::new(),
             widget_window:    HashMap::new(),
-            pending_textures: Vec::new(),
-            event_tx:         None,
-            dirty:            false,
+            pending_textures:  Vec::new(),
+            event_tx:          None,
+            dirty:             false,
+            palette_snapshot:  None,
         }
     }
 }
@@ -88,6 +91,12 @@ pub enum WidgetData {
     VBox,
     HBox,
     Scroll,
+    Badge         { text: String, color: String, outlined: bool },
+    Card          { title: Option<String> },
+    SectionHeader { text: String },
+    Metric        { label: String, value: String, unit: Option<String>, trend: Option<f32>, icon: Option<char> },
+    Toggle        { label: Option<String>, checked: bool },
+    TabBar        { tabs: Vec<String>, selected: usize },
 }
 
 // ── Marker ───────────────────────────────────────────────────────────────────
@@ -113,6 +122,7 @@ pub enum GuiEvent {
     InputSubmitted  { window_id: WindowId, widget_id: WidgetId, text: String },
     MapClicked          { window_id: WindowId, widget_id: WidgetId, room_id: u32 },
     TableRowSelected    { window_id: WindowId, widget_id: WidgetId, row_index: usize },
+    TabChanged          { window_id: WindowId, widget_id: WidgetId, index: usize },
     WindowClosed        { window_id: WindowId },
 }
 
@@ -126,6 +136,7 @@ impl GuiEvent {
             GuiEvent::InputSubmitted  { widget_id, .. } => Some(*widget_id),
             GuiEvent::MapClicked          { widget_id, .. } => Some(*widget_id),
             GuiEvent::TableRowSelected    { widget_id, .. } => Some(*widget_id),
+            GuiEvent::TabChanged          { widget_id, .. } => Some(*widget_id),
             GuiEvent::WindowClosed        { .. }            => None,
         }
     }
@@ -139,6 +150,7 @@ impl GuiEvent {
             GuiEvent::InputSubmitted  { window_id, .. } => *window_id,
             GuiEvent::MapClicked          { window_id, .. } => *window_id,
             GuiEvent::TableRowSelected    { window_id, .. } => *window_id,
+            GuiEvent::TabChanged          { window_id, .. } => *window_id,
             GuiEvent::WindowClosed        { window_id }     => *window_id,
         }
     }
@@ -152,6 +164,7 @@ impl GuiEvent {
             GuiEvent::CheckboxChanged     { .. } => Some(WaitEventType::Change),
             GuiEvent::InputChanged    { .. } => Some(WaitEventType::Change),
             GuiEvent::InputSubmitted  { .. } => Some(WaitEventType::Submit),
+            GuiEvent::TabChanged      { .. } => Some(WaitEventType::Change),
             GuiEvent::WindowClosed    { .. } => None,
         }
     }
@@ -171,6 +184,7 @@ impl GuiEvent {
             GuiEvent::InputSubmitted  { text, .. }      => Ok(LuaValue::String(lua.create_string(text)?)),
             GuiEvent::MapClicked          { room_id, .. }    => Ok(LuaValue::Integer(*room_id as i64)),
             GuiEvent::TableRowSelected    { row_index, .. }  => Ok(LuaValue::Integer(*row_index as i64)),
+            GuiEvent::TabChanged          { index, .. }      => Ok(LuaValue::Integer(*index as i64)),
             GuiEvent::WindowClosed        { .. }             => Ok(LuaValue::Nil),
         }
     }
