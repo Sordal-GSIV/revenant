@@ -60,7 +60,7 @@ pub fn render(
 
     egui::ScrollArea::both()
         .scroll_offset(scroll_offset)
-        .drag_to_scroll(true)
+        .scroll_source(egui::scroll_area::ScrollSource::ALL)
         .id_salt(widget_id)
         .show(ui, |ui| {
             let response = ui.add(

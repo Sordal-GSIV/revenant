@@ -17,8 +17,8 @@ login-gui = ["aes-gcm", "dirs"]
 monitor = ["login-gui"]
 
 [dependencies]
-eframe = "0.29"
-egui = "0.29"
+eframe = "0.33"
+egui = "0.33"
 image = "0.25"
 aes-gcm = { version = "0.10", optional = true }
 base64 = "0.22"

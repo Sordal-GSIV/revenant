@@ -515,7 +515,7 @@ fn register_map_view_ctor(
                                     let pixels: Vec<eframe::egui::Color32> = rgba.pixels()
                                         .map(|p| eframe::egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
                                         .collect();
-                                    let color_image = eframe::egui::ColorImage { size: [w as usize, h as usize], pixels };
+                                    let color_image = eframe::egui::ColorImage { size: [w as usize, h as usize], pixels, source_size: eframe::egui::Vec2::new(w as f32, h as f32) };
                                     {
                                         let mut s = gs4.lock().unwrap();
                                         if let Some(WidgetData::MapView { image_path, .. }) = s.widgets.get_mut(&id) {
