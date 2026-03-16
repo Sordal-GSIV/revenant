@@ -51,6 +51,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     register_window_ctor(lua, &gui_table, gui_state.clone(), callbacks.clone())?;
     register_widget_ctors(lua, &gui_table, gui_state.clone(), callbacks.clone())?;
     register_map_view_ctor(lua, &gui_table, gui_state.clone(), callbacks.clone())?;
+    register_palette(lua, &gui_table, gui_state.clone())?;
     register_wait(lua, &gui_table, callbacks.clone())?;
 
     lua.globals().set("Gui", gui_table)?;
@@ -429,6 +430,145 @@ fn register_widget_ctors(
         })?)?;
     }
 
+    // Gui.badge(text, opts)
+    {
+        let gs2 = gs.clone();
+        let cbs2 = cbs.clone();
+        gui.set("badge", lua.create_function(move |lua, (text, opts): (String, Option<LuaTable>)| {
+            let color: String = opts.as_ref().and_then(|o| o.get("color").ok()).unwrap_or_else(|| "accent".to_string());
+            let outlined: bool = opts.as_ref().and_then(|o| o.get("outlined").ok()).unwrap_or(false);
+            let id = next_widget_id();
+            gs2.lock().unwrap().widgets.insert(id, WidgetData::Badge { text, color, outlined });
+            let t = make_base_widget(lua, id, gs2.clone())?;
+            add_on_click(lua, &t, id, cbs2.clone())?;
+            Ok(t)
+        })?)?;
+    }
+
+    // Gui.card(opts)
+    {
+        let gs2 = gs.clone();
+        gui.set("card", lua.create_function(move |lua, opts: Option<LuaTable>| {
+            let title: Option<String> = opts.as_ref().and_then(|o| o.get("title").ok());
+            let id = next_widget_id();
+            {
+                let mut s = gs2.lock().unwrap();
+                s.widgets.insert(id, WidgetData::Card { title });
+                s.children.insert(id, Vec::new());
+            }
+            let t = make_base_widget(lua, id, gs2.clone())?;
+            add_add_method(lua, &t, id, gs2.clone())?;
+            Ok(t)
+        })?)?;
+    }
+
+    // Gui.section_header(text)
+    {
+        let gs2 = gs.clone();
+        gui.set("section_header", lua.create_function(move |lua, text: String| {
+            let id = next_widget_id();
+            gs2.lock().unwrap().widgets.insert(id, WidgetData::SectionHeader { text });
+            make_base_widget(lua, id, gs2.clone())
+        })?)?;
+    }
+
+    // Gui.metric(label, value, opts)
+    {
+        let gs2 = gs.clone();
+        gui.set("metric", lua.create_function(move |lua, (label, value, opts): (String, String, Option<LuaTable>)| {
+            let unit: Option<String> = opts.as_ref().and_then(|o| o.get("unit").ok());
+            let trend: Option<f32> = opts.as_ref().and_then(|o| o.get("trend").ok());
+            let icon: Option<char> = opts.as_ref()
+                .and_then(|o| o.get::<String>("icon").ok())
+                .and_then(|s| s.chars().next());
+            let id = next_widget_id();
+            gs2.lock().unwrap().widgets.insert(id, WidgetData::Metric { label, value, unit, trend, icon });
+            make_base_widget(lua, id, gs2.clone())
+        })?)?;
+    }
+
+    // Gui.toggle(label, checked)
+    {
+        let gs2 = gs.clone();
+        let cbs2 = cbs.clone();
+        gui.set("toggle", lua.create_function(move |lua, (label, checked): (Option<String>, bool)| {
+            let id = next_widget_id();
+            gs2.lock().unwrap().widgets.insert(id, WidgetData::Toggle { label, checked });
+            let t = make_base_widget(lua, id, gs2.clone())?;
+
+            let gs3 = gs2.clone();
+            t.set("set_checked", lua.create_function(move |_, (_self, v): (LuaValue, bool)| {
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::Toggle { checked, .. }) = s.widgets.get_mut(&id) {
+                    *checked = v;
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+
+            let gs3 = gs2.clone();
+            t.set("get_checked", lua.create_function(move |_, _self: LuaValue| {
+                let state = gs3.lock().unwrap();
+                if let Some(WidgetData::Toggle { checked, .. }) = state.widgets.get(&id) {
+                    Ok(*checked)
+                } else {
+                    Ok(false)
+                }
+            })?)?;
+
+            let cbs3 = cbs2.clone();
+            t.set("on_change", lua.create_function(move |_, (_self, cb): (LuaValue, LuaFunction)| {
+                cbs3.lock().unwrap().widget_callbacks.insert(id, cb);
+                Ok(())
+            })?)?;
+
+            Ok(t)
+        })?)?;
+    }
+
+    // Gui.tab_bar(tabs)
+    {
+        let gs2 = gs.clone();
+        let cbs2 = cbs.clone();
+        gui.set("tab_bar", lua.create_function(move |lua, tabs_lua: LuaTable| {
+            let tabs: Vec<String> = (1..=tabs_lua.len()?)
+                .map(|i| tabs_lua.get::<String>(i))
+                .collect::<LuaResult<Vec<_>>>()?;
+            let tab_count = tabs.len();
+            let id = next_widget_id();
+            {
+                let mut s = gs2.lock().unwrap();
+                s.widgets.insert(id, WidgetData::TabBar { tabs, selected: 0 });
+                // One children slot per tab, all empty initially
+                s.children.insert(id, vec![0; tab_count]);
+            }
+            let t = make_base_widget(lua, id, gs2.clone())?;
+
+            // set_tab_content(index, widget) — 1-based index
+            let gs3 = gs2.clone();
+            t.set("set_tab_content", lua.create_function(move |_, (_self, index, child): (LuaValue, usize, LuaTable)| {
+                let child_id: WidgetId = child.get("_id")?;
+                let mut s = gs3.lock().unwrap();
+                let children = s.children.entry(id).or_default();
+                // Extend with zeros if needed (index is 1-based)
+                if index > children.len() {
+                    children.resize(index, 0);
+                }
+                children[index - 1] = child_id;
+                s.dirty = true;
+                Ok(())
+            })?)?;
+
+            let cbs3 = cbs2.clone();
+            t.set("on_change", lua.create_function(move |_, (_self, cb): (LuaValue, LuaFunction)| {
+                cbs3.lock().unwrap().widget_callbacks.insert(id, cb);
+                Ok(())
+            })?)?;
+
+            Ok(t)
+        })?)?;
+    }
+
     Ok(())
 }
 
@@ -627,6 +767,48 @@ fn parse_color(s: &str) -> [f32; 4] {
     }
 }
 
+// ── Gui.palette() ────────────────────────────────────────────────────────────
+
+fn register_palette(
+    lua: &mlua::Lua,
+    gui: &LuaTable,
+    gs: Arc<Mutex<GuiState>>,
+) -> LuaResult<()> {
+    let gs2 = gs.clone();
+    gui.set("palette", lua.create_function(move |lua, ()| {
+        let s = gs2.lock().unwrap();
+        let palette = s.palette_snapshot.clone().unwrap_or_else(egui_theme::ColorPalette::slate);
+        let t = lua.create_table()?;
+
+        let c2t = |lua: &mlua::Lua, c: eframe::egui::Color32| -> LuaResult<LuaTable> {
+            let t = lua.create_table()?;
+            t.set("r", c.r())?;
+            t.set("g", c.g())?;
+            t.set("b", c.b())?;
+            t.set("a", c.a())?;
+            Ok(t)
+        };
+
+        t.set("base",          c2t(lua, palette.base)?)?;
+        t.set("panel",         c2t(lua, palette.panel)?)?;
+        t.set("surface",       c2t(lua, palette.surface)?)?;
+        t.set("elevated",      c2t(lua, palette.elevated)?)?;
+        t.set("accent",        c2t(lua, palette.accent)?)?;
+        t.set("accent_hover",  c2t(lua, palette.accent_hover)?)?;
+        t.set("success",       c2t(lua, palette.success)?)?;
+        t.set("error",         c2t(lua, palette.error)?)?;
+        t.set("warning",       c2t(lua, palette.warning)?)?;
+        t.set("info",          c2t(lua, palette.info)?)?;
+        t.set("text_primary",  c2t(lua, palette.text_primary)?)?;
+        t.set("text_secondary",c2t(lua, palette.text_secondary)?)?;
+        t.set("text_muted",    c2t(lua, palette.text_muted)?)?;
+        t.set("border",        c2t(lua, palette.border)?)?;
+        t.set("border_subtle", c2t(lua, palette.border_subtle)?)?;
+        Ok(t)
+    })?)?;
+    Ok(())
+}
+
 // ── Gui.wait() (Task 5) ───────────────────────────────────────────────────────
 fn register_wait(
     lua: &mlua::Lua,
@@ -733,6 +915,25 @@ async fn gui_event_loop(
             }
         }
 
+        // ── Checkbox/Toggle state writeback ───────────────────────────────
+        if let GuiEvent::CheckboxChanged { widget_id, value, .. } = &event {
+            let mut s = gs.lock().unwrap();
+            match s.widgets.get_mut(widget_id) {
+                Some(WidgetData::Checkbox { checked, .. }) => { *checked = *value; s.dirty = true; }
+                Some(WidgetData::Toggle   { checked, .. }) => { *checked = *value; s.dirty = true; }
+                _ => {}
+            }
+        }
+
+        // ── TabBar selected index writeback ───────────────────────────────
+        if let GuiEvent::TabChanged { widget_id, index, .. } = &event {
+            let mut s = gs.lock().unwrap();
+            if let Some(WidgetData::TabBar { selected, .. }) = s.widgets.get_mut(widget_id) {
+                *selected = *index;
+                s.dirty = true;
+            }
+        }
+
         // ── ButtonClicked: check widget waiter, then window-click waiter ──
         if let GuiEvent::ButtonClicked { window_id, widget_id } = &event {
             let wkey = WaitKey::Widget { widget_id: *widget_id, event_type: WaitEventType::Click };
@@ -758,7 +959,8 @@ async fn gui_event_loop(
                         GuiEvent::InputSubmitted  { text, .. }  => lua.create_string(text.as_str())
                             .map(LuaValue::String)
                             .unwrap_or(LuaValue::Nil),
-                        GuiEvent::MapClicked { room_id, .. } => LuaValue::Integer(*room_id as i64),
+                        GuiEvent::MapClicked  { room_id, .. } => LuaValue::Integer(*room_id as i64),
+                        GuiEvent::TabChanged  { index, .. }   => LuaValue::Integer(*index as i64),
                         _ => LuaValue::Nil,
                     };
                     tx.send(Some(lua_val)).ok();
@@ -779,13 +981,14 @@ async fn gui_event_loop(
             };
             if let Some(cb) = cb {
                 let event_val = match &event {
-                    GuiEvent::ButtonClicked  { widget_id, .. } => LuaValue::Integer(*widget_id as i64),
-                    GuiEvent::CheckboxChanged { value, .. }    => LuaValue::Boolean(*value),
-                    GuiEvent::InputChanged    { text, .. }     |
-                    GuiEvent::InputSubmitted  { text, .. }     => lua.create_string(text.as_str())
+                    GuiEvent::ButtonClicked   { widget_id, .. } => LuaValue::Integer(*widget_id as i64),
+                    GuiEvent::CheckboxChanged { value, .. }     => LuaValue::Boolean(*value),
+                    GuiEvent::InputChanged    { text, .. }      |
+                    GuiEvent::InputSubmitted  { text, .. }      => lua.create_string(text.as_str())
                         .map(LuaValue::String)
                         .unwrap_or(LuaValue::Nil),
-                    GuiEvent::MapClicked { room_id, .. }       => LuaValue::Integer(*room_id as i64),
+                    GuiEvent::MapClicked { room_id, .. }        => LuaValue::Integer(*room_id as i64),
+                    GuiEvent::TabChanged { index, .. }          => LuaValue::Integer(*index as i64),
                     _ => LuaValue::Nil,
                 };
                 let _ = cb.call_async::<()>(event_val).await;

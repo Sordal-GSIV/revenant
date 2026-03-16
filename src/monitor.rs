@@ -28,6 +28,7 @@ impl eframe::App for MonitorApp {
         }
 
         let palette = egui_theme::palette_from_ctx(ctx);
+        self.engine.gui_state.lock().unwrap().palette_snapshot = Some(palette.clone());
         let style = egui_theme::style_from_ctx(ctx);
         let vitals = &style.vitals_colors;
 
