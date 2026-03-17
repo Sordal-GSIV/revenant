@@ -125,6 +125,12 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 Some(id) => Ok(LuaValue::String(lua.create_string(id)?)),
                 None => Ok(LuaValue::Nil),
             },
+            "last_pulse" => match gs.last_pulse {
+                Some(t) => Ok(LuaValue::Number(t.elapsed().as_secs_f64())),
+                None => Ok(LuaValue::Nil),
+            },
+            "wound_gsl" => Ok(LuaValue::String(lua.create_string(&gs.wound_gsl())?)),
+            "scar_gsl" => Ok(LuaValue::String(lua.create_string(&gs.scar_gsl())?)),
             _ => Ok(LuaValue::Nil),
         }
     })?)?;

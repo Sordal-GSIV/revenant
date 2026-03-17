@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 /// A single game object (NPC, loot, PC, inventory item, etc.)
 #[derive(Debug, Clone)]
@@ -79,6 +80,8 @@ pub struct GameObjRegistry {
     /// Deduplication index: composite key → canonical GameObj instance.
     /// Persists across room transitions so the same object reuses the same instance.
     index: HashMap<String, GameObj>,
+    /// Tracks when each index key was last referenced (for TTL-based GC).
+    last_seen: HashMap<String, Instant>,
 }
 
 impl GameObjRegistry {
@@ -218,11 +221,13 @@ impl GameObjRegistry {
     /// Called on `<nav rm="...">` — clears all room-scoped registries.
     /// The deduplication index is intentionally preserved so re-encountered
     /// objects reuse existing instances (Lich5 `find_or_create` behaviour).
+    /// Stale index entries older than 5 minutes are pruned on each transition.
     pub fn clear_for_room_transition(&mut self) {
         self.clear_loot();
         self.clear_npcs();
         self.clear_pcs();
         self.clear_room_desc();
+        self.prune_stale();
     }
 
     // ── Status ───────────────────────────────────────────────────────────────
@@ -290,6 +295,25 @@ impl GameObjRegistry {
             .collect()
     }
 
+    // ── TTL-based GC ─────────────────────────────────────────────────────────
+
+    /// Default TTL for stale index entries: 5 minutes.
+    const STALE_TTL_SECS: u64 = 300;
+
+    /// Remove deduplication index entries that haven't been referenced within
+    /// `ttl` (defaults to 300 s). Call on room transitions or periodically.
+    pub fn prune_stale(&mut self) {
+        let cutoff = Instant::now() - std::time::Duration::from_secs(Self::STALE_TTL_SECS);
+        let stale_keys: Vec<String> = self.last_seen.iter()
+            .filter(|(_, &ts)| ts < cutoff)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in &stale_keys {
+            self.index.remove(key);
+            self.last_seen.remove(key);
+        }
+    }
+
     // ── Deduplication index ──────────────────────────────────────────────────
 
     fn find_or_create(
@@ -297,6 +321,7 @@ impl GameObjRegistry {
         before: Option<&str>, after: Option<&str>,
     ) -> GameObj {
         let key = index_key(id, noun, name);
+        self.last_seen.insert(key.clone(), Instant::now());
         if let Some(existing) = self.index.get_mut(&key) {
             if existing.before_name.is_none() {
                 existing.before_name = before.map(str::to_string);
@@ -345,5 +370,30 @@ mod tests {
         reg.new_fam_npc("100", "kobold", "a kobold");
         reg.new_fam_npc("100", "kobold", "a kobold");
         assert_eq!(reg.fam_npcs.len(), 1);
+    }
+
+    #[test]
+    fn test_prune_stale_removes_old_entries() {
+        let mut reg = GameObjRegistry::new();
+        reg.new_npc("100", "kobold", "a kobold", None);
+        assert_eq!(reg.index.len(), 1);
+        assert_eq!(reg.last_seen.len(), 1);
+
+        // Manually backdate the timestamp to make it stale
+        let key = index_key("100", "kobold", "a kobold");
+        reg.last_seen.insert(key, Instant::now() - std::time::Duration::from_secs(400));
+
+        reg.prune_stale();
+        assert!(reg.index.is_empty());
+        assert!(reg.last_seen.is_empty());
+    }
+
+    #[test]
+    fn test_prune_stale_keeps_recent_entries() {
+        let mut reg = GameObjRegistry::new();
+        reg.new_npc("100", "kobold", "a kobold", None);
+        // Just created — should not be pruned
+        reg.prune_stale();
+        assert_eq!(reg.index.len(), 1);
     }
 }

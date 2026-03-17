@@ -292,6 +292,9 @@ async fn run_proxy_loop(
     // Open database for this character session
     match crate::db::Db::open(&config.db_path) {
         Ok(db) => {
+            if let Err(e) = db.vacuum() {
+                tracing::warn!("DB VACUUM failed (non-fatal): {e}");
+            }
             engine.set_db(db, config.character.as_deref().unwrap_or(""), &config.game);
 
             // Construct Infomon with a second Db handle

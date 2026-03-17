@@ -56,6 +56,13 @@ impl Db {
         Ok(())
     }
 
+    /// Run VACUUM to reclaim unused space. Call once at startup.
+    pub fn vacuum(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("VACUUM")?;
+        Ok(())
+    }
+
     pub fn get_char_setting(&self, char: &str, game: &str, key: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         let mut s = conn.prepare(
@@ -272,5 +279,17 @@ mod tests {
         assert_eq!(all.len(), 0);
         let other = db.get_all_char_data("OtherChar", "GS3").unwrap();
         assert_eq!(other.len(), 1);
+    }
+
+    #[test]
+    fn test_vacuum_succeeds() {
+        let db = test_db();
+        db.set_char_data("Ondreian", "GS3", "stat.race", "Human").unwrap();
+        db.vacuum().unwrap();
+        // Data should still be intact after VACUUM
+        assert_eq!(
+            db.get_char_data("Ondreian", "GS3", "stat.race").unwrap(),
+            Some("Human".to_string())
+        );
     }
 }

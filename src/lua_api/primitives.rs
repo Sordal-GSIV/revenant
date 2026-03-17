@@ -626,6 +626,13 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         result
     })?)?;
 
+    // send_fake_tags(xml_string) — inject XML string as if it came from the game server.
+    // TODO: implement full tag parsing; currently a no-op stub that logs a warning.
+    globals.set("send_fake_tags", lua.create_function(|_, xml: String| {
+        tracing::warn!("send_fake_tags() called but not yet implemented (xml: {:.80}...)", xml);
+        Ok(())
+    })?)?;
+
     // idle_p([secs]) — returns true if no upstream command has been forwarded for >= secs (default 60)
     let last_up = engine.last_upstream_time.clone();
     globals.set("idle_p", lua.create_function(move |_, secs: Option<f64>| {

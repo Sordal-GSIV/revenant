@@ -284,6 +284,9 @@ pub struct GameState {
 
     pub login_time: Instant,
 
+    /// Instant of last detected mana pulse (mana increased from previous value).
+    pub last_pulse: Option<Instant>,
+
     // TODO: parse from XML `<container id="stow" ...>` if/when that tag appears in the stream
     pub stow_container_id: Option<String>,
 }
@@ -330,6 +333,7 @@ impl Default for GameState {
             familiar_room_exits: Vec::new(),
             effects: std::collections::HashMap::new(),
             login_time: Instant::now(),
+            last_pulse: None,
             stow_container_id: None,
         }
     }
@@ -358,6 +362,27 @@ impl GameState {
         }
     }
 
+    /// GSL-format wound severity bitstring (matches Lich5 `make_wound_gsl`).
+    /// Each digit is the wound severity (0-3) for one of 16 body parts.
+    pub fn wound_gsl(&self) -> String {
+        format!("{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            self.wounds.head, self.wounds.neck, self.wounds.back, self.wounds.chest,
+            self.wounds.abdomen, self.wounds.left_eye, self.wounds.right_eye,
+            self.wounds.left_arm, self.wounds.right_arm, self.wounds.left_hand,
+            self.wounds.right_hand, self.wounds.left_leg, self.wounds.right_leg,
+            self.wounds.left_foot, self.wounds.right_foot, self.wounds.nsys)
+    }
+
+    /// GSL-format scar severity bitstring (matches Lich5 `make_scar_gsl`).
+    pub fn scar_gsl(&self) -> String {
+        format!("{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            self.scars.head, self.scars.neck, self.scars.back, self.scars.chest,
+            self.scars.abdomen, self.scars.left_eye, self.scars.right_eye,
+            self.scars.left_arm, self.scars.right_arm, self.scars.left_hand,
+            self.scars.right_hand, self.scars.left_leg, self.scars.right_leg,
+            self.scars.left_foot, self.scars.right_foot, self.scars.nsys)
+    }
+
     pub fn apply(&mut self, event: XmlEvent) {
         match event {
             XmlEvent::Health { value, max }        => {
@@ -365,7 +390,11 @@ impl GameState {
                 self.health = value;
                 if let Some(m) = max { self.max_health = m; }
             }
-            XmlEvent::Mana { value, max }          => { self.mana = value;          if let Some(m) = max { self.max_mana = m; } }
+            XmlEvent::Mana { value, max }          => {
+                if value > self.mana { self.last_pulse = Some(Instant::now()); }
+                self.mana = value;
+                if let Some(m) = max { self.max_mana = m; }
+            }
             XmlEvent::Spirit { value, max }        => { self.spirit = value;        if let Some(m) = max { self.max_spirit = m; } }
             XmlEvent::Stamina { value, max }       => { self.stamina = value;       if let Some(m) = max { self.max_stamina = m; } }
             XmlEvent::Concentration { value, max } => { self.concentration = value; if let Some(m) = max { self.max_concentration = m; } }
@@ -551,5 +580,38 @@ mod tests {
         gs.apply(XmlEvent::FamiliarRoomDescription { text: "Part 1. ".into() });
         gs.apply(XmlEvent::FamiliarRoomDescription { text: "Part 2.".into() });
         assert_eq!(gs.familiar_room_description, "Part 1. Part 2.");
+    }
+
+    #[test]
+    fn test_last_pulse_detected_on_mana_increase() {
+        let mut gs = GameState::default();
+        gs.mana = 50;
+        assert!(gs.last_pulse.is_none());
+        gs.apply(XmlEvent::Mana { value: 55, max: None });
+        assert!(gs.last_pulse.is_some());
+    }
+
+    #[test]
+    fn test_last_pulse_not_on_mana_decrease() {
+        let mut gs = GameState::default();
+        gs.mana = 50;
+        gs.apply(XmlEvent::Mana { value: 45, max: None });
+        assert!(gs.last_pulse.is_none());
+    }
+
+    #[test]
+    fn test_wound_gsl_format() {
+        let mut gs = GameState::default();
+        gs.wounds.head = 2;
+        gs.wounds.nsys = 1;
+        assert_eq!(gs.wound_gsl(), "2000000000000001");
+    }
+
+    #[test]
+    fn test_scar_gsl_format() {
+        let mut gs = GameState::default();
+        gs.scars.chest = 3;
+        gs.scars.left_arm = 1;
+        assert_eq!(gs.scar_gsl(), "0003000100000000");
     }
 }
