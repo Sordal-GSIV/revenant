@@ -270,6 +270,26 @@ impl GameObjRegistry {
             .collect()
     }
 
+    /// NPCs that are valid targets: status is NOT "dead" (and status is not absent
+    /// with a "dead" substring either — mirrors Lich5 `GameObj.targets`).
+    pub fn target_npcs(&self) -> Vec<&GameObj> {
+        self.npcs.iter()
+            .filter(|o| {
+                match self.npc_status.get(&o.id) {
+                    Some(s) => !s.contains("dead"),
+                    None => true, // no status means alive
+                }
+            })
+            .collect()
+    }
+
+    /// NPCs whose status contains "hidden".
+    pub fn hidden_npcs(&self) -> Vec<&GameObj> {
+        self.npcs.iter()
+            .filter(|o| self.npc_status.get(&o.id).map(|s| s.contains("hidden")).unwrap_or(false))
+            .collect()
+    }
+
     // ── Deduplication index ──────────────────────────────────────────────────
 
     fn find_or_create(

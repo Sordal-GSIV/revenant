@@ -313,6 +313,64 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         })?)?;
     }
 
+    // GameObj.targets() — NPCs that are valid targets (not dead)
+    {
+        let go = go_arc.clone();
+        let td = td_arc.clone();
+        game_obj_tbl.raw_set("targets", lua.create_function(move |lua, ()| {
+            let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
+            match reg.as_ref() {
+                None => Ok(lua.create_table()?),
+                Some(r) => {
+                    let r2 = r.lock().unwrap();
+                    let targets: Vec<GameObj> = r2.target_npcs().into_iter().cloned().collect();
+                    obj_array(lua, &targets, r.clone(), type_data)
+                }
+            }
+        })?)?;
+    }
+
+    // GameObj.target() — first valid target, or nil
+    {
+        let go = go_arc.clone();
+        let td = td_arc.clone();
+        game_obj_tbl.raw_set("target", lua.create_function(move |lua, ()| {
+            let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
+            match reg.as_ref() {
+                None => Ok(LuaValue::Nil),
+                Some(r) => {
+                    let r2 = r.lock().unwrap();
+                    match r2.target_npcs().first() {
+                        None => Ok(LuaValue::Nil),
+                        Some(obj) => Ok(LuaValue::UserData(lua.create_userdata(
+                            LuaGameObj::from_obj(obj, r.clone(), type_data)
+                        )?)),
+                    }
+                }
+            }
+        })?)?;
+    }
+
+    // GameObj.hidden_targets() — NPCs with status containing "hidden"
+    {
+        let go = go_arc.clone();
+        let td = td_arc.clone();
+        game_obj_tbl.raw_set("hidden_targets", lua.create_function(move |lua, ()| {
+            let reg = go.lock().unwrap();
+            let type_data = td.read().unwrap_or_else(|e| e.into_inner()).clone();
+            match reg.as_ref() {
+                None => Ok(lua.create_table()?),
+                Some(r) => {
+                    let r2 = r.lock().unwrap();
+                    let hidden: Vec<GameObj> = r2.hidden_npcs().into_iter().cloned().collect();
+                    obj_array(lua, &hidden, r.clone(), type_data)
+                }
+            }
+        })?)?;
+    }
+
     // GameObj.dead() — dead NPCs
     {
         let go = go_arc.clone();
