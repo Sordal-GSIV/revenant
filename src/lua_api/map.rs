@@ -99,6 +99,24 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                     }
                     None => t.set("image_coords", LuaValue::Nil)?,
                 }
+                // DR-specific fields
+                match &r.genie_id {
+                    Some(id) => t.set("genie_id", *id)?,
+                    None => t.set("genie_id", LuaValue::Nil)?,
+                }
+                match &r.genie_zone {
+                    Some(z) => t.set("genie_zone", z.as_str())?,
+                    None => t.set("genie_zone", LuaValue::Nil)?,
+                }
+                match &r.genie_pos {
+                    Some(pos) => {
+                        let pos_t = lua.create_table()?;
+                        pos_t.set(1, pos[0])?;
+                        pos_t.set(2, pos[1])?;
+                        t.set("genie_pos", pos_t)?;
+                    }
+                    None => t.set("genie_pos", LuaValue::Nil)?,
+                }
 
                 Ok(LuaValue::Table(t))
             }

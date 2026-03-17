@@ -30,6 +30,13 @@ pub struct MapRoom {
     pub image: Option<String>,
     #[serde(default)]
     pub image_coords: Option<[f64; 4]>,
+    // DR-specific fields (ignored when loading GS maps)
+    #[serde(default)]
+    pub genie_id: Option<u32>,
+    #[serde(default)]
+    pub genie_zone: Option<String>,
+    #[serde(default)]
+    pub genie_pos: Option<[f64; 2]>,
 }
 
 pub struct MapData {

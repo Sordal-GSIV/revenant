@@ -219,6 +219,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let ds_hooks = engine.downstream_hooks.clone();
         let ds_lua = engine.lua.clone();
         let game_log = engine.game_log.clone();
+        let safe_flag = engine.safe_to_respond.clone();
 
         // Downstream: server → parse XML → hook chain → client_writer
         let mut down_handle = tokio::spawn(async move {
@@ -251,6 +252,9 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                 }
                 {
                     let events = parser.feed(&chunk);
+
+                    // Update safe_to_respond flag for DR output injection safety
+                    safe_flag.store(parser.safe_to_respond(), std::sync::atomic::Ordering::Relaxed);
 
                     // Game log capture (no locks on gs or go needed)
                     for event in &events {

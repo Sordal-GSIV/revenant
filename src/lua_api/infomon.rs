@@ -82,7 +82,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             "info full", "skill", "spell", "experience", "society",
             "citizenship", "armor list all", "cman list all", "feat list all",
             "shield list all", "weapon list all", "ascension list all",
-            "resource", "warcry", "profile full",
+            "resource", "warcry", "profile full", "tickets", "wealth",
         ];
         let sink = upstream_sink.lock().unwrap();
         if let Some(ref send_fn) = *sink {
@@ -111,7 +111,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
             "info full", "skill", "spell", "experience", "society",
             "citizenship", "armor list all", "cman list all", "feat list all",
             "shield list all", "weapon list all", "ascension list all",
-            "resource", "warcry", "profile full",
+            "resource", "warcry", "profile full", "tickets", "wealth",
         ];
         let sink = upstream_sink.lock().unwrap();
         if let Some(ref send_fn) = *sink {

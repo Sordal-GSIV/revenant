@@ -14,13 +14,23 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     })?)?;
 
     // respond(text) — echo to client TCP stream (also logged to respond_log for monitor)
+    // When safe_to_respond is false (DR in-stream), buffer output and flush later.
     let engine_respond = engine.respond_sink.clone();
     let respond_log = engine.respond_log.clone();
+    let safe_flag = engine.safe_to_respond.clone();
     globals.set("respond", lua.create_function(move |_, text: String| {
         {
             let mut log = respond_log.lock().unwrap();
             if log.len() >= 500 { log.pop_front(); }
             log.push_back(text.clone());
+        }
+        // DR safety: wait briefly if not safe to inject output into stream
+        if !safe_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            // Spin up to 500ms waiting for safe window
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                if safe_flag.load(std::sync::atomic::Ordering::Relaxed) { break; }
+            }
         }
         if let Some(f) = engine_respond.lock().unwrap().as_ref() {
             f(format!("<output class=\"mono\">{text}</output>\n"));
