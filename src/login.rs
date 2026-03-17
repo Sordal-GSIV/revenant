@@ -1092,7 +1092,7 @@ impl LoginApp {
             let cmd_options = launch_cmd_suggestions();
             let dir_options = launch_dir_suggestions();
             ui.horizontal(|ui| {
-                ui.label("Command:");
+                ui.add_space(right_pad);
                 egui_theme::EditableComboBox::new(
                     "manual_launch_cmd",
                     &mut self.manual_custom_launch,
@@ -1100,9 +1100,10 @@ impl LoginApp {
                 )
                 .hint_text("(enter custom launch command)")
                 .show(ui);
+                ui.add_space(right_pad);
             });
             ui.horizontal(|ui| {
-                ui.label("Directory:");
+                ui.add_space(right_pad);
                 egui_theme::EditableComboBox::new(
                     "manual_launch_dir",
                     &mut self.manual_custom_launch_dir,
@@ -1110,6 +1111,7 @@ impl LoginApp {
                 )
                 .hint_text("(enter working directory for command)")
                 .show(ui);
+                ui.add_space(right_pad);
             });
         }
 
