@@ -1341,7 +1341,7 @@ impl LoginApp {
             &mut self.acct_tree_selected,
         )
         .sort_state(&mut self.acct_tree_sort_col, &mut self.acct_tree_sort_asc)
-        .min_body_height(200.0)
+        .min_body_height(320.0)
         .show(ui);
 
         ui.add_space(8.0);
