@@ -176,6 +176,9 @@ pub struct LoginApp {
     change_pw_new: String,
     change_pw_confirm: String,
     change_pw_status: String,
+    change_pw_verifying: bool,
+    change_pw_tx: SyncSender<Result<String, String>>,  // Ok("new"|"old") or Err(msg)
+    change_pw_rx: Receiver<Result<String, String>>,
     acct_tree_selected: Option<usize>,
     acct_tree_sort_col: Option<usize>,
     acct_tree_sort_asc: bool,
@@ -226,6 +229,7 @@ impl LoginApp {
         let (fetch_tx, fetch_rx) = sync_channel(1);
         let (add_acct_tx, add_acct_rx) = sync_channel(1);
         let (play_tx, play_rx) = sync_channel(1);
+        let (change_pw_tx, change_pw_rx) = sync_channel::<Result<String, String>>(1);
         let enc_config = crate::encryption::EncryptionConfig::load();
         let key = match enc_config.mode {
             crate::encryption::EncryptionMode::Plaintext => None,
@@ -275,6 +279,9 @@ impl LoginApp {
             change_pw_new: String::new(),
             change_pw_confirm: String::new(),
             change_pw_status: String::new(),
+            change_pw_verifying: false,
+            change_pw_tx: change_pw_tx,
+            change_pw_rx: change_pw_rx,
             acct_tree_selected: None,
             acct_tree_sort_col: None,
             acct_tree_sort_asc: true,
@@ -414,6 +421,41 @@ impl eframe::App for LoginApp {
                 }
                 Err(e) => {
                     self.add_acct_status = format!("Error: {e}");
+                }
+            }
+        }
+
+        // Poll change-password verification result
+        if let Ok(res) = self.change_pw_rx.try_recv() {
+            self.change_pw_verifying = false;
+            match res {
+                Ok(which) => {
+                    if which == "new" {
+                        // New password works on server — save it locally
+                        if let Some(ref pw_acct) = self.change_pw_account.clone() {
+                            match self.store.add_account(pw_acct, &self.change_pw_new, self.key.as_ref()) {
+                                Ok(()) => {
+                                    let _ = self.store.save();
+                                    self.accounts_status = format!("Password changed successfully for '{pw_acct}'.");
+                                    self.change_pw_account = None;
+                                    self.change_pw_current.clear();
+                                    self.change_pw_new.clear();
+                                    self.change_pw_confirm.clear();
+                                    self.change_pw_status.clear();
+                                }
+                                Err(e) => {
+                                    self.change_pw_status = format!("Failed to save: {e}");
+                                }
+                            }
+                        }
+                    } else {
+                        // "old" — new password failed but old still works
+                        self.change_pw_status =
+                            "New password doesn't work. Old password is still active on the server.".into();
+                    }
+                }
+                Err(msg) => {
+                    self.change_pw_status = msg;
                 }
             }
         }
@@ -1464,7 +1506,13 @@ impl LoginApp {
                             ui.end_row();
                         });
 
-                    if !self.change_pw_status.is_empty() {
+                    if self.change_pw_verifying {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(&self.change_pw_status);
+                        });
+                    } else if !self.change_pw_status.is_empty() {
                         ui.add_space(4.0);
                         ui.colored_label(palette.error, &self.change_pw_status);
                     }
@@ -1475,7 +1523,7 @@ impl LoginApp {
                             if ui.button("Cancel").clicked() {
                                 close_dialog = true;
                             }
-                            if ui.button("Change Password").clicked() {
+                            if ui.add_enabled(!self.change_pw_verifying, egui::Button::new("Change Password")).clicked() {
                                 // Validate
                                 if self.change_pw_current.is_empty() {
                                     self.change_pw_status = "Current password cannot be empty.".into();
@@ -1484,23 +1532,53 @@ impl LoginApp {
                                 } else if self.change_pw_new != self.change_pw_confirm {
                                     self.change_pw_status = "New passwords do not match.".into();
                                 } else {
-                                    // Verify current password against stored
+                                    // Verify current password against local store first
                                     match self.store.get_password(&pw_acct, self.key.as_ref()) {
                                         Ok(stored_pw) => {
                                             if stored_pw != self.change_pw_current {
                                                 self.change_pw_status = "Current password is incorrect.".into();
                                             } else {
-                                                // Re-encrypt with new password
-                                                match self.store.add_account(&pw_acct, &self.change_pw_new, self.key.as_ref()) {
-                                                    Ok(()) => {
-                                                        let _ = self.store.save();
-                                                        self.accounts_status = format!("Password changed successfully for '{pw_acct}'.");
-                                                        close_dialog = true;
+                                                // Local check passed — now verify new password works with eaccess
+                                                self.change_pw_verifying = true;
+                                                self.change_pw_status = "Verifying new password with server...".into();
+                                                let account = pw_acct.clone();
+                                                let new_pw = self.change_pw_new.clone();
+                                                let old_pw = self.change_pw_current.clone();
+                                                let tx = self.change_pw_tx.clone();
+                                                let ctx = ui.ctx().clone();
+                                                std::thread::spawn(move || {
+                                                    let rt = match tokio::runtime::Runtime::new() {
+                                                        Ok(rt) => rt,
+                                                        Err(e) => {
+                                                            let _ = tx.send(Err(format!("Runtime error: {e}")));
+                                                            ctx.request_repaint();
+                                                            return;
+                                                        }
+                                                    };
+                                                    // Test new password
+                                                    let new_result = rt.block_on(
+                                                        list_all_characters(&account, &new_pw)
+                                                    );
+                                                    if new_result.is_ok() {
+                                                        let _ = tx.send(Ok("new".into()));
+                                                        ctx.request_repaint();
+                                                        return;
                                                     }
-                                                    Err(e) => {
-                                                        self.change_pw_status = format!("Failed to change password: {e}");
+                                                    // New password failed — test old password
+                                                    let old_result = rt.block_on(
+                                                        list_all_characters(&account, &old_pw)
+                                                    );
+                                                    if old_result.is_ok() {
+                                                        // Old still works, new doesn't
+                                                        let _ = tx.send(Ok("old".into()));
+                                                    } else {
+                                                        // Both failed
+                                                        let _ = tx.send(Err(
+                                                            "Neither password works with the server. Check your credentials.".into()
+                                                        ));
                                                     }
-                                                }
+                                                    ctx.request_repaint();
+                                                });
                                             }
                                         }
                                         Err(e) => {
