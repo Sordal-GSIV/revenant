@@ -1161,7 +1161,7 @@ async fn gui_event_loop(
     lua: Arc<mlua::Lua>,
 ) {
     while let Some(event) = event_rx.recv().await {
-        let win_id = event.window_id();
+        let _win_id = event.window_id();
 
         // ── WindowClosed: drain all waiters for this window ───────────────
         if let GuiEvent::WindowClosed { window_id } = &event {
