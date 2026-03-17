@@ -5,12 +5,6 @@ use crate::eaccess::{list_all_characters, CharacterEntry};
 use eframe::egui;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
-/// Known game codes and their display names.
-const GAME_CODES: &[(&str, &str)] = &[
-    ("GS3", "GemStone IV"),
-    ("DR", "DragonRealms"),
-    ("GSF", "GemStone IV Prime F2P"),
-];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Frontend {
@@ -185,13 +179,16 @@ pub struct LoginApp {
     acct_tree_expanded: std::collections::HashMap<String, bool>,
     // Add Character sub-tab
     add_char_account_idx: usize,
-    add_char_name: String,
-    add_char_game_idx: usize,
     add_char_status: String,
     add_char_frontend: Frontend,
     add_char_custom_launch_enabled: bool,
     add_char_custom_launch: String,
     add_char_custom_launch_dir: String,
+    add_char_fetching: bool,
+    add_char_chars: Vec<CharacterEntry>,
+    add_char_tree_selected: Option<usize>,
+    add_char_tx: SyncSender<Result<Vec<CharacterEntry>, String>>,
+    add_char_rx: Receiver<Result<Vec<CharacterEntry>, String>>,
     // Add Account sub-tab
     add_acct_username: String,
     add_acct_password: String,
@@ -226,6 +223,7 @@ impl LoginApp {
         let (fetch_tx, fetch_rx) = sync_channel(1);
         let (add_acct_tx, add_acct_rx) = sync_channel(1);
         let (play_tx, play_rx) = sync_channel(1);
+        let (add_char_tx, add_char_rx) = sync_channel::<Result<Vec<CharacterEntry>, String>>(1);
         let (change_pw_tx, change_pw_rx) = sync_channel::<Result<String, String>>(1);
         let enc_config = crate::encryption::EncryptionConfig::load();
         let key = match enc_config.mode {
@@ -284,13 +282,16 @@ impl LoginApp {
             acct_tree_sort_asc: true,
             acct_tree_expanded: std::collections::HashMap::new(),
             add_char_account_idx: 0,
-            add_char_name: String::new(),
-            add_char_game_idx: 0,
             add_char_status: String::new(),
             add_char_frontend: Frontend::Wrayth,
             add_char_custom_launch_enabled: false,
             add_char_custom_launch: String::new(),
             add_char_custom_launch_dir: String::new(),
+            add_char_fetching: false,
+            add_char_chars: Vec::new(),
+            add_char_tree_selected: None,
+            add_char_tx: add_char_tx,
+            add_char_rx: add_char_rx,
             add_acct_username: String::new(),
             add_acct_password: String::new(),
             add_acct_status: String::new(),
@@ -437,6 +438,24 @@ impl eframe::App for LoginApp {
                 }
                 Err(e) => {
                     self.add_acct_status = format!("Error: {e}");
+                }
+            }
+        }
+
+        // Poll add-character fetch result
+        if let Ok(res) = self.add_char_rx.try_recv() {
+            self.add_char_fetching = false;
+            match res {
+                Ok(chars) => {
+                    self.add_char_chars = chars;
+                    self.add_char_tree_selected = None;
+                    self.add_char_status = format!(
+                        "Found {} character(s). Select one and click Add Character.",
+                        self.add_char_chars.len()
+                    );
+                }
+                Err(e) => {
+                    self.add_char_status = format!("Error: {e}");
                 }
             }
         }
@@ -1653,71 +1672,125 @@ impl LoginApp {
         let account_names: Vec<String> =
             self.store.accounts.iter().map(|a| a.account.clone()).collect();
 
-        // Clamp index
         if self.add_char_account_idx >= account_names.len() {
             self.add_char_account_idx = 0;
         }
 
-        egui::Grid::new("add_char_grid")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("Account:");
-                egui::ComboBox::from_id_salt("add_char_acct")
-                    .selected_text(&account_names[self.add_char_account_idx])
-                    .show_ui(ui, |ui| {
-                        for (i, name) in account_names.iter().enumerate() {
-                            ui.selectable_value(&mut self.add_char_account_idx, i, name);
-                        }
-                    });
-                ui.end_row();
+        // Account selector + Fetch button
+        ui.horizontal(|ui| {
+            ui.label("Account:");
+            egui::ComboBox::from_id_salt("add_char_acct")
+                .selected_text(&account_names[self.add_char_account_idx])
+                .show_ui(ui, |ui| {
+                    for (i, name) in account_names.iter().enumerate() {
+                        ui.selectable_value(&mut self.add_char_account_idx, i, name);
+                    }
+                });
 
-                ui.label("Character:");
-                ui.text_edit_singleline(&mut self.add_char_name);
-                ui.end_row();
+            if ui.add_enabled(!self.add_char_fetching, egui::Button::new("Fetch")).clicked() {
+                let acct_name = &account_names[self.add_char_account_idx];
+                match self.store.get_password(acct_name, self.key.as_ref()) {
+                    Ok(pw) => {
+                        self.add_char_fetching = true;
+                        self.add_char_status = "Fetching characters...".to_string();
+                        self.add_char_chars.clear();
+                        self.add_char_tree_selected = None;
 
-                ui.label("Game:");
-                egui::ComboBox::from_id_salt("add_char_game")
-                    .selected_text(GAME_CODES[self.add_char_game_idx.min(GAME_CODES.len() - 1)].1)
-                    .show_ui(ui, |ui| {
-                        for (i, &(_code, name)) in GAME_CODES.iter().enumerate() {
-                            ui.selectable_value(&mut self.add_char_game_idx, i, name);
-                        }
-                    });
-                ui.end_row();
+                        let account = acct_name.clone();
+                        let tx = self.add_char_tx.clone();
+                        let ctx = ui.ctx().clone();
+
+                        std::thread::spawn(move || {
+                            let rt = match tokio::runtime::Runtime::new() {
+                                Ok(rt) => rt,
+                                Err(e) => {
+                                    let _ = tx.send(Err(e.to_string()));
+                                    ctx.request_repaint();
+                                    return;
+                                }
+                            };
+                            let result = rt.block_on(list_all_characters(&account, &pw));
+                            let _ = tx.send(result.map_err(|e| format!("{e:#}")));
+                            ctx.request_repaint();
+                        });
+                    }
+                    Err(e) => {
+                        self.add_char_status = format!("Failed to decrypt password: {e}");
+                    }
+                }
+            }
+        });
+
+        if self.add_char_fetching {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Fetching...");
             });
+        }
 
         ui.add_space(6.0);
 
+        // Character TreeView (from server, like manual entry)
+        let columns = vec![
+            egui_theme::TreeColumn { label: "Game".into(), width: Some(180.0), sortable: true },
+            egui_theme::TreeColumn { label: "Character".into(), width: None, sortable: true },
+        ];
+
+        let mut tree_rows: Vec<egui_theme::TreeRow> = self.add_char_chars
+            .iter()
+            .map(|ch| egui_theme::TreeRow {
+                cells: vec![ch.game_name.clone(), ch.name.clone()],
+                children: vec![],
+                expanded: false,
+            })
+            .collect();
+
+        egui_theme::TreeView::new(
+            "add_char_tree",
+            &columns,
+            &mut tree_rows,
+            &mut self.add_char_tree_selected,
+        )
+        .min_body_height(120.0)
+        .show(ui);
+
+        ui.add_space(6.0);
+
+        // Frontend radio buttons (platform-gated, like manual entry)
         ui.horizontal(|ui| {
-            ui.label("Frontend:");
             ui.radio_value(&mut self.add_char_frontend, Frontend::Wrayth, "Wrayth");
             ui.radio_value(&mut self.add_char_frontend, Frontend::Wizard, "Wizard");
+            #[cfg(target_os = "macos")]
             ui.radio_value(&mut self.add_char_frontend, Frontend::Avalon, "Avalon");
         });
 
+        // Custom launch (same as manual entry)
         ui.checkbox(&mut self.add_char_custom_launch_enabled, "Custom launch command");
         if self.add_char_custom_launch_enabled {
             let cmd_options = launch_cmd_suggestions();
             let dir_options = launch_dir_suggestions();
+            let combo_pad = 24.0;
+            let combo_width = ui.available_width() - combo_pad * 2.0;
             ui.horizontal(|ui| {
-                ui.label("Command:");
+                ui.add_space(combo_pad);
+                ui.set_max_width(combo_width);
                 egui_theme::EditableComboBox::new(
                     "add_char_launch_cmd",
                     &mut self.add_char_custom_launch,
                     &cmd_options,
                 )
-                .hint_text("Custom command...")
+                .hint_text("(enter custom launch command)")
                 .show(ui);
             });
             ui.horizontal(|ui| {
-                ui.label("Directory:");
+                ui.add_space(combo_pad);
+                ui.set_max_width(combo_width);
                 egui_theme::EditableComboBox::new(
                     "add_char_launch_dir",
                     &mut self.add_char_custom_launch_dir,
                     &dir_options,
                 )
-                .hint_text("Working directory...")
+                .hint_text("(enter working directory for command)")
                 .show(ui);
             });
         }
@@ -1731,54 +1804,52 @@ impl LoginApp {
                 self.acct_sub_tab_idx = 0;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if ui.button("Add Character").clicked() {
-                if self.add_char_name.trim().is_empty() {
-                    self.add_char_status = "Character name is required.".to_string();
-                } else {
-                    let acct = &account_names[self.add_char_account_idx];
-                    let game_idx = self.add_char_game_idx.min(GAME_CODES.len() - 1);
-                    let (code, name) = GAME_CODES[game_idx];
-                    let custom_launch = if self.add_char_custom_launch_enabled {
-                        Some(self.add_char_custom_launch.clone())
-                    } else {
-                        None
-                    };
-                    let custom_launch_dir = if self.add_char_custom_launch_enabled {
-                        Some(self.add_char_custom_launch_dir.clone())
-                    } else {
-                        None
-                    };
-                    self.store.add_character(
-                        acct,
-                        self.add_char_name.trim(),
-                        code,
-                        name,
-                        self.add_char_frontend.as_str(),
-                        custom_launch,
-                        custom_launch_dir,
-                    );
-                    match self.store.save() {
-                        Ok(()) => {
-                            self.add_char_status = format!(
-                                "Added '{}' to '{}'.",
-                                self.add_char_name.trim(),
-                                acct
+                let can_add = self.add_char_tree_selected.is_some();
+                if ui.add_enabled(can_add, egui::Button::new("Add Character")).clicked() {
+                    if let Some(sel) = self.add_char_tree_selected {
+                        if let Some(ch) = self.add_char_chars.get(sel) {
+                            let acct = &account_names[self.add_char_account_idx];
+                            let custom_launch = if self.add_char_custom_launch_enabled {
+                                Some(self.add_char_custom_launch.clone())
+                            } else {
+                                None
+                            };
+                            let custom_launch_dir = if self.add_char_custom_launch_enabled {
+                                Some(self.add_char_custom_launch_dir.clone())
+                            } else {
+                                None
+                            };
+                            self.store.add_character(
+                                acct,
+                                &ch.name,
+                                &ch.game_code,
+                                &ch.game_name,
+                                self.add_char_frontend.as_str(),
+                                custom_launch,
+                                custom_launch_dir,
                             );
-                            self.add_char_name.clear();
-                        }
-                        Err(e) => {
-                            self.add_char_status = format!("Failed to save: {e}");
+                            match self.store.save() {
+                                Ok(()) => {
+                                    self.add_char_status = format!(
+                                        "Added '{}' to '{}'.", ch.name, acct
+                                    );
+                                    // Switch back to Accounts tab
+                                    self.acct_sub_tab = AcctSubTab::Accounts;
+                                    self.acct_sub_tab_idx = 0;
+                                    self.accounts_status = self.add_char_status.clone();
+                                }
+                                Err(e) => {
+                                    self.add_char_status = format!("Failed to save: {e}");
+                                }
+                            }
                         }
                     }
                 }
-            }
             });
         });
 
         if !self.add_char_status.is_empty() {
-            let color = if self.add_char_status.starts_with("Failed")
-                || self.add_char_status.starts_with("Character name")
-            {
+            let color = if self.add_char_status.starts_with("Failed") {
                 palette.error
             } else {
                 palette.success
