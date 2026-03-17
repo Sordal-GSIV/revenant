@@ -224,6 +224,17 @@ fn register_widget_ctors(
             let id = next_widget_id();
             gs2.lock().unwrap().widgets.insert(id, WidgetData::Button { label });
             let t = make_base_widget(lua, id, gs2.clone())?;
+
+            let gs3 = gs2.clone();
+            t.set("set_text", lua.create_function(move |_, (_self, text): (LuaValue, String)| {
+                let mut s = gs3.lock().unwrap();
+                if let Some(WidgetData::Button { label: ref mut v }) = s.widgets.get_mut(&id) {
+                    *v = text;
+                    s.dirty = true;
+                }
+                Ok(())
+            })?)?;
+
             add_on_click(lua, &t, id, cbs2.clone())?;
             Ok(t)
         })?)?;

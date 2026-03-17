@@ -1,4 +1,5 @@
 use mlua::prelude::*;
+use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use base64::Engine as _;
@@ -53,6 +54,16 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 },
                 Err(e) => Ok((None, Some(e.to_string()))),
             }
+        })?,
+    )?;
+
+    // md5(content) -> hex string
+    crypto_table.set(
+        "md5",
+        lua.create_function(|_, content: String| {
+            let mut hasher = Md5::new();
+            hasher.update(content.as_bytes());
+            Ok(format!("{:x}", hasher.finalize()))
         })?,
     )?;
 

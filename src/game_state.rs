@@ -120,8 +120,16 @@ impl EncumbranceState {
 impl Game {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Game::GemStone => "GS",
+            Game::GemStone => "GS3",
             Game::DragonRealms => "DR",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Self {
+        if code.starts_with("DR") {
+            Game::DragonRealms
+        } else {
+            Game::GemStone
         }
     }
 }

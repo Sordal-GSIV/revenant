@@ -22,7 +22,7 @@ impl MonitorApp {
 impl eframe::App for MonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.theme_applied {
-            let config = crate::theme_config::ThemeConfig { theme: self.theme_name.clone() };
+            let config = crate::app_config::AppConfig { theme: self.theme_name.clone(), ..Default::default() };
             config.to_theme().apply(ctx);
             self.theme_applied = true;
         }
