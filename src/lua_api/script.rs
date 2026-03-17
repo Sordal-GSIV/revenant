@@ -250,6 +250,35 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         }
     })?)?;
 
+    // Script.pause_all() — pause all running scripts except the caller
+    {
+        let paused = engine.paused.clone();
+        let running = engine.running.clone();
+        let no_pause = engine.no_pause_all.clone();
+        let thread_names = engine.thread_names.clone();
+        t.set("pause_all", lua.create_function(move |lua, ()| {
+            let ptr = lua.current_thread().to_pointer() as usize;
+            let caller = thread_names.lock().unwrap().get(&ptr).cloned();
+            let protected = no_pause.lock().unwrap().clone();
+            let names: Vec<String> = running.lock().unwrap().iter()
+                .filter(|(n, h)| !h.is_finished() && !protected.contains(*n) && caller.as_deref() != Some(n.as_str()))
+                .map(|(n, _)| n.clone())
+                .collect();
+            let mut p = paused.lock().unwrap();
+            for n in names { p.insert(n); }
+            Ok(())
+        })?)?;
+    }
+
+    // Script.unpause_all() — unpause all scripts
+    {
+        let paused = engine.paused.clone();
+        t.set("unpause_all", lua.create_function(move |_, ()| {
+            paused.lock().unwrap().clear();
+            Ok(())
+        })?)?;
+    }
+
     // Script.exit() — cleanly exit the current script
     t.set("exit", lua.create_function(move |_, ()| -> LuaResult<()> {
         Err(LuaError::RuntimeError("[script exit]".into()))
