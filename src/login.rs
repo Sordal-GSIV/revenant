@@ -172,7 +172,10 @@ pub struct LoginApp {
     // Accounts sub-tab
     accounts_status: String,
     change_pw_account: Option<String>,
-    change_pw_value: String,
+    change_pw_current: String,
+    change_pw_new: String,
+    change_pw_confirm: String,
+    change_pw_status: String,
     acct_tree_selected: Option<usize>,
     acct_tree_sort_col: Option<usize>,
     acct_tree_sort_asc: bool,
@@ -268,7 +271,10 @@ impl LoginApp {
             acct_sub_tab_idx: 0,
             accounts_status: String::new(),
             change_pw_account: None,
-            change_pw_value: String::new(),
+            change_pw_current: String::new(),
+            change_pw_new: String::new(),
+            change_pw_confirm: String::new(),
+            change_pw_status: String::new(),
             acct_tree_selected: None,
             acct_tree_sort_col: None,
             acct_tree_sort_asc: true,
@@ -1414,38 +1420,106 @@ impl LoginApp {
             if ui.add_enabled(is_account_selected, egui::Button::new("Change Password")).clicked() {
                 if let Some((acct, _)) = &selected_info {
                     self.change_pw_account = Some(acct.clone());
-                    self.change_pw_value.clear();
+                    self.change_pw_current.clear();
+                    self.change_pw_new.clear();
+                    self.change_pw_confirm.clear();
+                    self.change_pw_status.clear();
                 }
             }
         });
 
-        // Change password inline
-        if let Some(ref pw_acct) = self.change_pw_account.clone() {
-            ui.horizontal(|ui| {
-                ui.label("New password:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.change_pw_value).password(true),
-                );
-                if ui.button("Save").clicked() {
-                    if let Err(e) = self.store.add_account(
-                        pw_acct,
-                        &self.change_pw_value,
-                        self.key.as_ref(),
-                    ) {
-                        self.accounts_status = format!("Error: {e}");
-                    } else {
-                        let _ = self.store.save();
-                        self.accounts_status =
-                            format!("Password updated for '{pw_acct}'.");
+        // Change password dialog (matching lich-5: modal with current/new/confirm fields)
+        // No server connection — purely local credential store update
+        if self.change_pw_account.is_some() {
+            let pw_acct = self.change_pw_account.clone().unwrap();
+            let mut close_dialog = false;
+
+            egui::Window::new("Change Password")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .default_width(400.0)
+                .show(ui.ctx(), |ui| {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Account:");
+                        ui.label(egui::RichText::new(&pw_acct).strong());
+                    });
+                    ui.add_space(8.0);
+
+                    egui::Grid::new("change_pw_grid")
+                        .num_columns(2)
+                        .spacing([8.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("Current Password:");
+                            ui.add(egui::TextEdit::singleline(&mut self.change_pw_current).password(true));
+                            ui.end_row();
+
+                            ui.label("New Password:");
+                            ui.add(egui::TextEdit::singleline(&mut self.change_pw_new).password(true));
+                            ui.end_row();
+
+                            ui.label("Confirm Password:");
+                            ui.add(egui::TextEdit::singleline(&mut self.change_pw_confirm).password(true));
+                            ui.end_row();
+                        });
+
+                    if !self.change_pw_status.is_empty() {
+                        ui.add_space(4.0);
+                        ui.colored_label(palette.error, &self.change_pw_status);
                     }
-                    self.change_pw_account = None;
-                    self.change_pw_value.clear();
-                }
-                if ui.button("Cancel").clicked() {
-                    self.change_pw_account = None;
-                    self.change_pw_value.clear();
-                }
-            });
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            if ui.button("Cancel").clicked() {
+                                close_dialog = true;
+                            }
+                            if ui.button("Change Password").clicked() {
+                                // Validate
+                                if self.change_pw_current.is_empty() {
+                                    self.change_pw_status = "Current password cannot be empty.".into();
+                                } else if self.change_pw_new.is_empty() {
+                                    self.change_pw_status = "New password cannot be empty.".into();
+                                } else if self.change_pw_new != self.change_pw_confirm {
+                                    self.change_pw_status = "New passwords do not match.".into();
+                                } else {
+                                    // Verify current password against stored
+                                    match self.store.get_password(&pw_acct, self.key.as_ref()) {
+                                        Ok(stored_pw) => {
+                                            if stored_pw != self.change_pw_current {
+                                                self.change_pw_status = "Current password is incorrect.".into();
+                                            } else {
+                                                // Re-encrypt with new password
+                                                match self.store.add_account(&pw_acct, &self.change_pw_new, self.key.as_ref()) {
+                                                    Ok(()) => {
+                                                        let _ = self.store.save();
+                                                        self.accounts_status = format!("Password changed successfully for '{pw_acct}'.");
+                                                        close_dialog = true;
+                                                    }
+                                                    Err(e) => {
+                                                        self.change_pw_status = format!("Failed to change password: {e}");
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            self.change_pw_status = format!("Failed to verify password: {e}");
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    });
+                });
+
+            if close_dialog {
+                self.change_pw_account = None;
+                self.change_pw_current.clear();
+                self.change_pw_new.clear();
+                self.change_pw_confirm.clear();
+                self.change_pw_status.clear();
+            }
         }
 
         // Handle removal
