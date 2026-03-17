@@ -1,6 +1,23 @@
 -- builtins.lua: Lua-side built-in functions loaded at API registration time.
 -- These compose Rust primitives (get, get_noblock, clear, pause, etc.).
 
+-- Detect if a pattern needs regex (contains |, \d, \w, \b, lookahead, etc.)
+local function is_regex_pattern(pat)
+    return pat:find("|", 1, true) ~= nil
+        or pat:find("\\d") ~= nil
+        or pat:find("\\w") ~= nil
+        or pat:find("\\b") ~= nil
+        or pat:find("(?") ~= nil
+end
+
+-- Smart match: uses Regex if pattern contains regex syntax, else Lua string.find
+function smart_find(text, pattern)
+    if is_regex_pattern(pattern) then
+        return Regex.test(pattern, text)
+    end
+    return string.find(text, pattern) ~= nil
+end
+
 function wait()
     clear()
     return get()
@@ -11,7 +28,7 @@ function matchfind(...)
     local lines = reget(100)
     for _, line in ipairs(lines) do
         for _, pattern in ipairs(patterns) do
-            if string.find(line, pattern) then
+            if smart_find(line, pattern) then
                 return line
             end
         end
@@ -24,7 +41,7 @@ function matchwait(...)
     while true do
         local line = get()
         for _, pattern in ipairs(patterns) do
-            if string.find(line, pattern) then
+            if smart_find(line, pattern) then
                 return line
             end
         end
@@ -38,7 +55,7 @@ function matchtimeout(timeout, ...)
         local line = get_noblock()
         if line then
             for _, pattern in ipairs(patterns) do
-                if string.find(line, pattern) then
+                if smart_find(line, pattern) then
                     return line
                 end
             end
@@ -161,6 +178,7 @@ function die_with_me(target)
 end
 
 function waitforre(pattern, timeout)
+    local re = Regex.new(pattern)
     local elapsed = 0
     while true do
         if timeout and elapsed >= timeout then return nil end
@@ -175,8 +193,8 @@ function waitforre(pattern, timeout)
             line = get()
         end
         if line then
-            local captures = { string.match(line, pattern) }
-            if #captures > 0 then return line, captures end
+            local captures = re:captures(line)
+            if captures then return line, captures end
         end
     end
 end
@@ -549,10 +567,10 @@ function selectput(cmd, success, failure, timeout)
                 pause(0.1)
             else
                 for _, pat in ipairs(success) do
-                    if string.find(line, pat) then return line end
+                    if smart_find(line, pat) then return line end
                 end
                 for _, pat in ipairs(failure) do
-                    if string.find(line, pat) then break end
+                    if smart_find(line, pat) then break end
                 end
                 if string.find(line, "^>$") or string.find(line, "<prompt") then
                     break
@@ -572,7 +590,7 @@ function dothistimeout(cmd, timeout, patterns)
         local line = get_noblock()
         if line then
             for _, pat in ipairs(patterns) do
-                if string.find(line, pat) then
+                if smart_find(line, pat) then
                     return line
                 end
             end
