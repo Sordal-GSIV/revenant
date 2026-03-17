@@ -1,4 +1,5 @@
 use crate::script_engine::ScriptEngine;
+use crate::game_state::Game;
 use std::sync::Arc;
 
 pub enum DispatchResult {
@@ -102,16 +103,25 @@ pub async fn dispatch(raw: &str, engine: &Arc<ScriptEngine>) -> DispatchResult {
         }
         name => {
             let scripts_dir = engine.scripts_dir.lock().unwrap().clone();
-            let dir_path = format!("{}/{}/init.lua", scripts_dir, name);
-            let file_path = format!("{}/{}.lua", scripts_dir, name);
-            let path = if std::path::Path::new(&dir_path).exists() {
-                dir_path
-            } else if std::path::Path::new(&file_path).exists() {
-                file_path
-            } else {
-                engine.respond(&format!("Script not found: {name}"));
-                return DispatchResult::Consumed;
+            // Game-specific script resolution: check {game}/{name} before {name}
+            let game_sub = {
+                let guard = engine.game_state.lock().unwrap();
+                match guard.as_ref() {
+                    Some(gs) => match gs.read().unwrap_or_else(|e| e.into_inner()).game {
+                        Game::DragonRealms => "dr",
+                        Game::GemStone => "gs",
+                    },
+                    None => "gs",
+                }
             };
+            let path = resolve_script_path(&scripts_dir, game_sub, name)
+                .unwrap_or_else(|| {
+                    engine.respond(&format!("Script not found: {name}"));
+                    String::new()
+                });
+            if path.is_empty() {
+                return DispatchResult::Consumed;
+            }
             let args = parse_args(rest);
             match engine.start_script(name, &path, args) {
                 Ok(()) => {}
@@ -120,6 +130,18 @@ pub async fn dispatch(raw: &str, engine: &Arc<ScriptEngine>) -> DispatchResult {
             DispatchResult::Consumed
         }
     }
+}
+
+/// Resolve a script name to a file path, checking game-specific dirs first.
+/// Order: {game}/{name}/init.lua → {game}/{name}.lua → {name}/init.lua → {name}.lua
+pub fn resolve_script_path(scripts_dir: &str, game_sub: &str, name: &str) -> Option<String> {
+    let candidates = [
+        format!("{}/{}/{}/init.lua", scripts_dir, game_sub, name),
+        format!("{}/{}/{}.lua", scripts_dir, game_sub, name),
+        format!("{}/{}/init.lua", scripts_dir, name),
+        format!("{}/{}.lua", scripts_dir, name),
+    ];
+    candidates.into_iter().find(|p| std::path::Path::new(p).exists())
 }
 
 #[cfg(test)]

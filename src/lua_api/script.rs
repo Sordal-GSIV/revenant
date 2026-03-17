@@ -88,6 +88,7 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
     let script_lines_tx_run = engine.script_lines_tx.clone();
     let script_lines_rx_run = engine.script_lines_rx.clone();
     let at_exit_hooks_run = engine.at_exit_hooks.clone();
+    let game_state_run = engine.game_state.clone();
     t.set("run", lua.create_async_function(move |_, (name, args_str): (String, Option<String>)| {
         let running2 = running2.clone();
         let script_args2 = script_args2.clone();
@@ -99,22 +100,27 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         let script_lines_tx_run = script_lines_tx_run.clone();
         let script_lines_rx_run = script_lines_rx_run.clone();
         let at_exit_hooks_run = at_exit_hooks_run.clone();
+        let game_state_run = game_state_run.clone();
         async move {
             let dir = scripts_dir2.lock().unwrap().clone();
 
-            // Two-step lookup: directory package first, then single file
-            let pkg_init = format!("{dir}/{name}/init.lua");
-            let single_file = format!("{dir}/{name}.lua");
-
-            let path = if std::path::Path::new(&pkg_init).exists() {
-                pkg_init
-            } else if std::path::Path::new(&single_file).exists() {
-                single_file
-            } else {
-                return Err(mlua::Error::RuntimeError(format!(
-                    "script not found: {name} (checked {name}/init.lua and {name}.lua)"
-                )));
+            // Determine game subdir for game-specific script resolution
+            let game_sub = {
+                let guard = game_state_run.lock().unwrap();
+                match guard.as_ref() {
+                    Some(gs) => match gs.read().unwrap_or_else(|e| e.into_inner()).game {
+                        crate::game_state::Game::DragonRealms => "dr",
+                        crate::game_state::Game::GemStone => "gs",
+                    },
+                    None => "gs",
+                }
             };
+
+            // Game-aware lookup: {game}/{name} → {name}
+            let path = crate::dispatch::resolve_script_path(&dir, game_sub, &name)
+                .ok_or_else(|| mlua::Error::RuntimeError(format!(
+                    "script not found: {name} (checked {game_sub}/{name} and {name})"
+                )))?;
 
             let args_string = args_str.unwrap_or_default();
             let mut args = if args_string.is_empty() { vec![] } else { vec![args_string.clone()] };
@@ -249,13 +255,22 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
         Err(LuaError::RuntimeError("[script exit]".into()))
     })?)?;
 
-    // Script.exists(name) — check if a script file exists
+    // Script.exists(name) — check if a script file exists (game-aware)
     let scripts_dir_exists = engine.scripts_dir.clone();
+    let game_state_exists = engine.game_state.clone();
     t.set("exists", lua.create_function(move |_, name: String| {
         let dir = scripts_dir_exists.lock().unwrap().clone();
-        let pkg_init = format!("{dir}/{name}/init.lua");
-        let single_file = format!("{dir}/{name}.lua");
-        Ok(std::path::Path::new(&pkg_init).exists() || std::path::Path::new(&single_file).exists())
+        let game_sub = {
+            let guard = game_state_exists.lock().unwrap();
+            match guard.as_ref() {
+                Some(gs) => match gs.read().unwrap_or_else(|e| e.into_inner()).game {
+                    crate::game_state::Game::DragonRealms => "dr",
+                    crate::game_state::Game::GemStone => "gs",
+                },
+                None => "gs",
+            }
+        };
+        Ok(crate::dispatch::resolve_script_path(&dir, game_sub, &name).is_some())
     })?)?;
 
     let globals = lua.globals();
