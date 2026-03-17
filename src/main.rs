@@ -316,7 +316,8 @@ fn show_login_window() -> anyhow::Result<revenant::login::LoginResult> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Revenant — Login")
-            .with_inner_size([app_config.window_width, app_config.window_height]),
+            .with_inner_size([app_config.window_width, app_config.window_height])
+            .with_min_inner_size([420.0, 350.0]),
         ..Default::default()
     };
 

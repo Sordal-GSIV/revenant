@@ -1021,9 +1021,12 @@ impl LoginApp {
             ui.add_space(right_pad); // left padding
             let list_width = ui.available_width() - right_pad; // right padding
             ui.set_max_width(list_width);
+            // Reserve fixed height for character list area
+            ui.set_min_height(160.0);
             egui::ScrollArea::vertical()
                 .max_height(160.0)
                 .show(ui, |ui| {
+                    ui.set_min_height(140.0); // ensure content area has height even when empty
                     match &self.connect_state {
                         ConnectState::Idle => {
                             ui.label("");
@@ -1126,7 +1129,7 @@ impl LoginApp {
 
         // Play button — right-aligned with matching padding
         let can_play = self.manual_selected_char.is_some() && is_connected && !authenticating;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             ui.add_space(right_pad);
             if ui
                 .add_enabled(can_play, egui::Button::new("Play"))
