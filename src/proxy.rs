@@ -204,6 +204,9 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
             Err(e) => tracing::warn!("Failed to load {type_path}: {e} (type data disabled)"),
         }
 
+        // Set frontend from config
+        *engine.frontend.lock().unwrap() = crate::frontend::Frontend::from_name(&config.frontend);
+
         engine.install_lua_api()?;
 
         // Launch autostart.lua if it exists
@@ -220,6 +223,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let ds_lua = engine.lua.clone();
         let game_log = engine.game_log.clone();
         let safe_flag = engine.safe_to_respond.clone();
+        let engine_fe = engine.frontend.clone();
 
         // Downstream: server → parse XML → hook chain → client_writer
         let mut down_handle = tokio::spawn(async move {
@@ -344,7 +348,16 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                 };
                 match result {
                     Some(s) => {
-                        if let Err(e) = client_tx_down.send(s.into_bytes()) {
+                        // Strip room numbers from streamWindow subtitles for Genie/Frostbite
+                        let frontend = *engine_fe.lock().unwrap();
+                        let output = if frontend == crate::frontend::Frontend::Genie
+                            || frontend == crate::frontend::Frontend::Frostbite
+                        {
+                            strip_room_number(&s)
+                        } else {
+                            s
+                        };
+                        if let Err(e) = client_tx_down.send(output.into_bytes()) {
                             warn!("client_tx send failed (downstream): {e}");
                             break;
                         }
@@ -461,4 +474,23 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
     }
 
     Ok(())
+}
+
+/// Strip room numbers from streamWindow subtitle attributes for frontends that
+/// don't handle them well (Genie, Frostbite).
+///
+/// Matches patterns like `] (12345)"` or `] (**)"` inside subtitle attributes
+/// of `<streamWindow` tags with `id='room'` or `id='main'`.
+fn strip_room_number(s: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    // Only strip if the line contains a streamWindow tag for room or main
+    if !s.contains("<streamWindow") || !(s.contains("id='room'") || s.contains("id='main'")) {
+        return s.to_string();
+    }
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"\] \((?:\d+|\*\*)\)"#).unwrap()
+    });
+    re.replace_all(s, "]").to_string()
 }
