@@ -55,7 +55,11 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        info!("Revenant starting — listening on {}", resolved.listen);
+        if resolved.without_frontend {
+            info!("Revenant starting in headless mode (no frontend)");
+        } else {
+            info!("Revenant starting — listening on {}", resolved.listen);
+        }
         revenant::proxy::run(resolved, engine).await
     })
 }

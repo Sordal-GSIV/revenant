@@ -21,6 +21,16 @@ pub struct Config {
     pub map_path: Option<String>,
     #[arg(long, default_value_t = false)]
     pub monitor: bool,
+    #[arg(long, default_value_t = false)]
+    pub without_frontend: bool,
+    #[arg(long)]
+    pub detachable_client_port: Option<u16>,
+    #[arg(long, default_value = "127.0.0.1")]
+    pub detachable_client_host: String,
+    #[arg(long, default_value_t = false)]
+    pub reconnect: bool,
+    #[arg(long, default_value_t = 30)]
+    pub reconnect_delay: u64,
     #[arg(skip)]
     pub session: Option<crate::eaccess::Session>,
     #[arg(skip)]
