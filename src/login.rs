@@ -1087,8 +1087,11 @@ impl LoginApp {
 
             let cmd_options = launch_cmd_suggestions();
             let dir_options = launch_dir_suggestions();
+            let combo_pad = right_pad + 8.0; // extra padding so dropdown doesn't touch window edge
+            let combo_width = ui.available_width() - combo_pad * 2.0;
             ui.horizontal(|ui| {
-                ui.add_space(right_pad);
+                ui.add_space(combo_pad);
+                ui.set_max_width(combo_width);
                 egui_theme::EditableComboBox::new(
                     "manual_launch_cmd",
                     &mut self.manual_custom_launch,
@@ -1096,10 +1099,10 @@ impl LoginApp {
                 )
                 .hint_text("(enter custom launch command)")
                 .show(ui);
-                ui.add_space(right_pad);
             });
             ui.horizontal(|ui| {
-                ui.add_space(right_pad);
+                ui.add_space(combo_pad);
+                ui.set_max_width(combo_width);
                 egui_theme::EditableComboBox::new(
                     "manual_launch_dir",
                     &mut self.manual_custom_launch_dir,
@@ -1107,7 +1110,6 @@ impl LoginApp {
                 )
                 .hint_text("(enter working directory for command)")
                 .show(ui);
-                ui.add_space(right_pad);
             });
         }
 
