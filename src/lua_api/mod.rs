@@ -21,6 +21,7 @@ pub mod skills;
 pub mod spell;
 pub mod spells;
 pub mod stats;
+pub mod frontend;
 pub mod version;
 
 use crate::script_engine::ScriptEngine;
@@ -51,6 +52,7 @@ pub fn register_all(engine: &ScriptEngine) -> Result<()> {
     infomon::register(engine).map_err(|e| anyhow::anyhow!("infomon register: {e}"))?;
     json::register(engine).map_err(|e| anyhow::anyhow!("json register: {e}"))?;
     version::register(engine).map_err(|e| anyhow::anyhow!("version register: {e}"))?;
+    frontend::register(engine).map_err(|e| anyhow::anyhow!("frontend register: {e}"))?;
     crate::gui::lua_api::register(engine).map_err(|e| anyhow::anyhow!("gui register: {e}"))?;
     register_lua_builtins(engine)?;
     Ok(())

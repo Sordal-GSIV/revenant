@@ -75,6 +75,8 @@ pub struct ScriptEngine {
     /// DR safe-to-respond flag — updated by XML parser, checked by respond().
     /// true = safe to inject output, false = inside a stream/style block (DR only).
     pub safe_to_respond: Arc<std::sync::atomic::AtomicBool>,
+    /// Detected or configured frontend client.
+    pub frontend: Arc<Mutex<crate::frontend::Frontend>>,
 }
 
 impl ScriptEngine {
@@ -121,6 +123,7 @@ impl ScriptEngine {
             last_upstream_time: Arc::new(Mutex::new(std::time::Instant::now())),
             gui_state: std::sync::Arc::new(std::sync::Mutex::new(crate::gui::GuiState::default())),
             safe_to_respond: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            frontend: Arc::new(Mutex::new(crate::frontend::Frontend::default())),
         }
     }
 
