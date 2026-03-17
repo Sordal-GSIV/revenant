@@ -635,7 +635,7 @@ impl LoginApp {
                                                 a.characters.iter().any(|c| c.name == *name && c.game_code == *game_code && c.favorite)
                                             }) { "\u{2605} " } else { "" };
                                             let play_label = format!(
-                                                "{}{}    {}    {}",
+                                                "{}{}  |  {}  |  {}",
                                                 star_prefix, name, game_name, frontend_display
                                             );
                                             if ui
@@ -664,17 +664,7 @@ impl LoginApp {
                                                     }
                                                 }
                                             }
-                                            // Star toggle (gold for favorite)
-                                            let star_text = egui::RichText::new("\u{2605}")
-                                                .color(star_gold);
-                                            if ui.button(star_text).clicked() {
-                                                toggle_fav = Some((
-                                                    account.clone(),
-                                                    name.clone(),
-                                                    game_code.clone(),
-                                                ));
-                                            }
-                                            // Remove button (red)
+                                            // Remove button (red) — before star, matching lich-5 order
                                             if ui
                                                 .add(egui::Button::new(
                                                     egui::RichText::new("Remove")
@@ -689,6 +679,16 @@ impl LoginApp {
                                                     game_code.clone(),
                                                 ));
                                             }
+                                            // Star toggle (gold for favorite)
+                                            let star_text = egui::RichText::new("\u{2605}")
+                                                .color(star_gold);
+                                            if ui.button(star_text).clicked() {
+                                                toggle_fav = Some((
+                                                    account.clone(),
+                                                    name.clone(),
+                                                    game_code.clone(),
+                                                ));
+                                            }
                                         });
                                     })
                                     .response;
@@ -697,7 +697,7 @@ impl LoginApp {
                                 let rect = row_resp.rect;
                                 ui.painter().line_segment(
                                     [rect.left_top(), rect.left_bottom()],
-                                    egui::Stroke::new(2.0, gold),
+                                    egui::Stroke::new(2.0, star_gold),
                                 );
                             }
                         });
@@ -783,13 +783,7 @@ impl LoginApp {
                                                             }
                                                         }
                                                     }
-                                                    if ui.button(egui::RichText::new("\u{2605}").color(star_gold)).clicked() {
-                                                        toggle_fav = Some((
-                                                            account_name.clone(),
-                                                            name.clone(),
-                                                            game_code.clone(),
-                                                        ));
-                                                    }
+                                                    // Remove button first, then star — matching lich-5 order
                                                     if ui
                                                         .add(egui::Button::new(
                                                             egui::RichText::new("Remove")
@@ -799,6 +793,13 @@ impl LoginApp {
                                                         .clicked()
                                                     {
                                                         remove_char = Some((
+                                                            account_name.clone(),
+                                                            name.clone(),
+                                                            game_code.clone(),
+                                                        ));
+                                                    }
+                                                    if ui.button(egui::RichText::new("\u{2605}").color(star_gold)).clicked() {
+                                                        toggle_fav = Some((
                                                             account_name.clone(),
                                                             name.clone(),
                                                             game_code.clone(),
@@ -814,7 +815,7 @@ impl LoginApp {
                                                 a.characters.iter().any(|c| c.name == *name && c.game_code == *game_code && c.favorite)
                                             }) { "\u{2605} " } else { "" };
                                             let play_label = format!(
-                                                "{}{}    {}    {}",
+                                                "{}{}  |  {}  |  {}",
                                                 star_prefix, name, game_name, frontend_display
                                             );
                                             if ui
@@ -847,14 +848,7 @@ impl LoginApp {
                                                     }
                                                 }
                                             }
-                                            let star_color = palette.text_secondary;
-                                            if ui.button(egui::RichText::new("\u{2606}").color(star_color)).clicked() {
-                                                toggle_fav = Some((
-                                                    account_name.clone(),
-                                                    name.clone(),
-                                                    game_code.clone(),
-                                                ));
-                                            }
+                                            // Remove button first, then star — matching lich-5 order
                                             if ui
                                                 .add(egui::Button::new(
                                                     egui::RichText::new("Remove")
@@ -864,6 +858,14 @@ impl LoginApp {
                                                 .clicked()
                                             {
                                                 remove_char = Some((
+                                                    account_name.clone(),
+                                                    name.clone(),
+                                                    game_code.clone(),
+                                                ));
+                                            }
+                                            let star_color = palette.text_secondary;
+                                            if ui.button(egui::RichText::new("\u{2606}").color(star_color)).clicked() {
+                                                toggle_fav = Some((
                                                     account_name.clone(),
                                                     name.clone(),
                                                     game_code.clone(),
