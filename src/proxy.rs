@@ -1,4 +1,4 @@
-use crate::{config::Config, eaccess, game_obj::GameObjRegistry, game_state::GameState, script_engine::ScriptEngine, xml_parser::{ObjHand, ObjCategory, StreamParser}};
+use crate::{config::Config, eaccess, frontend::Capability, game_obj::GameObjRegistry, game_state::GameState, gsl_converter::GslConverter, script_engine::ScriptEngine, xml_parser::{ObjHand, ObjCategory, StreamParser}};
 use anyhow::Result;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -407,6 +407,7 @@ async fn run_proxy_loop(
 
         let mut buf = vec![0u8; 4096];
         let mut parser = StreamParser::new(parser_game);
+        let mut gsl_converter = GslConverter::new();
         loop {
             let n = srv_r.read(&mut buf).await?;
             if n == 0 { break; }
@@ -522,9 +523,13 @@ async fn run_proxy_loop(
                             }
                         }
                     } else {
-                        // Strip room numbers from streamWindow subtitles for Genie/Frostbite
                         let frontend = *engine_fe.lock().unwrap();
-                        let output = if frontend == crate::frontend::Frontend::Genie
+                        let output = if frontend.supports(Capability::Gsl) {
+                            match gsl_converter.convert(&s) {
+                                Some(converted) => converted,
+                                None => continue, // suppressed by GSL converter
+                            }
+                        } else if frontend == crate::frontend::Frontend::Genie
                             || frontend == crate::frontend::Frontend::Frostbite
                         {
                             strip_room_number(&s)
@@ -745,6 +750,7 @@ fn spawn_detachable_listener(
             let ds_hooks = engine.downstream_hooks.clone();
             let ds_lua = engine.lua.clone();
             let mut det_down = tokio::spawn(async move {
+                let mut det_gsl = GslConverter::new();
                 loop {
                     match ds_rx.recv().await {
                         Ok(raw) => {
@@ -760,7 +766,12 @@ fn spawn_detachable_listener(
                             };
                             if let Some(s) = result {
                                 let frontend = *ds_fe.lock().unwrap();
-                                let output = if frontend == crate::frontend::Frontend::Genie
+                                let output = if frontend.supports(Capability::Gsl) {
+                                    match det_gsl.convert(&s) {
+                                        Some(converted) => converted,
+                                        None => continue,
+                                    }
+                                } else if frontend == crate::frontend::Frontend::Genie
                                     || frontend == crate::frontend::Frontend::Frostbite
                                 {
                                     strip_room_number(&s)
