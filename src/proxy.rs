@@ -181,8 +181,11 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
             Err(e) => tracing::warn!("Failed to open DB at {}: {e}", config.db_path),
         }
 
-        // Load spell definitions from scripts_dir/data/
-        let spell_path = format!("{}/data/effect-list.xml", config.scripts_dir);
+        // Game-specific data subfolder: GS3/GS4/GST → "gs", DR/DRT/DRF → "dr"
+        let data_game_dir = if config.game.starts_with("DR") { "dr" } else { "gs" };
+
+        // Load spell definitions from scripts_dir/data/{game}/
+        let spell_path = format!("{}/data/{}/effect-list.xml", config.scripts_dir, data_game_dir);
         match crate::spell_data::SpellList::load(&spell_path) {
             Ok(sl) => {
                 tracing::info!("Loaded {} spell definitions from {}", sl.len(), spell_path);
@@ -191,8 +194,8 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
             Err(e) => tracing::warn!("Failed to load {spell_path}: {e} (spell system disabled)"),
         }
 
-        // Load gameobj type data from scripts_dir/data/
-        let type_path = format!("{}/data/gameobj-data.xml", config.scripts_dir);
+        // Load gameobj type data from scripts_dir/data/{game}/
+        let type_path = format!("{}/data/{}/gameobj-data.xml", config.scripts_dir, data_game_dir);
         match crate::type_data::TypeData::load(&type_path) {
             Ok(td) => {
                 tracing::info!("Loaded gameobj type data from {}", type_path);
