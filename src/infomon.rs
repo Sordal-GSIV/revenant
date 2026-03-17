@@ -147,6 +147,33 @@ static CHAR_GENDER_AGE_FULL: LazyLock<Regex> = LazyLock::new(|| Regex::new(
     r"^Gender:\s+(\w+)\s+Age:\s+([\d,]+)\s+Expr:\s+([\d,]+)\s+Level:\s+(\d+)"
 ).unwrap());
 
+// ── Currency Patterns (from Lich5 infomon/parser.rb) ─────────────────────────
+
+// TICKETS command output: "  Category - N type."
+static TICKET_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^\s*(General|Troubled Waters|Duskruin Arena|Reim|Ebon Gate|Rumor Woods|Gold)\s*-\s*([\d,]+)"
+).unwrap());
+
+// "You are carrying N silver stored within your ..."
+static WEALTH_SILVER_CONTAINER: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^You are carrying ([\d,]+) silver stored within your "
+).unwrap());
+
+// "You are carrying N redsteel marks."
+static REDSTEEL_MARKS: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"(?:Redsteel Marks:\s+|You are carrying )([\d,]+)(?: redsteel marks?)?"
+).unwrap());
+
+// "You are carrying N gigas artifact fragments."
+static GIGAS_FRAGMENTS: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"You are carrying ([\d,]+) gigas artifact fragments?"
+).unwrap());
+
+// "You are carrying N Dust in your reserves."
+static GEMSTONE_DUST: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"You are carrying ([\d,]+) Dust in your reserves?"
+).unwrap());
+
 // ── PSM Category Mapping ─────────────────────────────────────────────────────
 
 fn psm_category_to_prefix(category: &str) -> Option<&'static str> {
@@ -412,6 +439,57 @@ impl Infomon {
             self.cache.insert("resources.covert_arts_charges".into(), charges.clone());
             let _ = self.db.set_char_data(&self.character, &self.game, "resources.covert_arts_charges", &charges);
             self.state = ParserState::InResource { had_data: true };
+            return;
+        }
+
+        // TICKETS command output: "  General - 5 tickets."
+        if let Some(caps) = TICKET_LINE.captures(line) {
+            let category = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let amount = caps.get(2).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            let key = match category {
+                "General" => "currency.tickets",
+                "Troubled Waters" => "currency.blackscrip",
+                "Duskruin Arena" => "currency.bloodscrip",
+                "Reim" => "currency.ethereal_scrip",
+                "Ebon Gate" => "currency.soul_shards",
+                "Rumor Woods" => "currency.raikhen",
+                "Gold" => "currency.gold",
+                _ => return,
+            };
+            self.cache.insert(key.into(), amount.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, key, &amount);
+            return;
+        }
+
+        // "You are carrying N silver stored within your ..."
+        if let Some(caps) = WEALTH_SILVER_CONTAINER.captures(line) {
+            let amount = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.cache.insert("currency.silver_container".into(), amount.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "currency.silver_container", &amount);
+            return;
+        }
+
+        // Redsteel marks
+        if let Some(caps) = REDSTEEL_MARKS.captures(line) {
+            let amount = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.cache.insert("currency.redsteel_marks".into(), amount.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "currency.redsteel_marks", &amount);
+            return;
+        }
+
+        // Gigas artifact fragments
+        if let Some(caps) = GIGAS_FRAGMENTS.captures(line) {
+            let amount = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.cache.insert("currency.gigas_artifact_fragments".into(), amount.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "currency.gigas_artifact_fragments", &amount);
+            return;
+        }
+
+        // Gemstone dust
+        if let Some(caps) = GEMSTONE_DUST.captures(line) {
+            let amount = caps.get(1).map(|m| m.as_str().replace(',', "")).unwrap_or_default();
+            self.cache.insert("currency.gemstone_dust".into(), amount.clone());
+            let _ = self.db.set_char_data(&self.character, &self.game, "currency.gemstone_dust", &amount);
             return;
         }
 
