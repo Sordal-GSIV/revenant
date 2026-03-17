@@ -1,7 +1,7 @@
 #![cfg(feature = "login-gui")]
 
 use crate::credentials::CredentialStore;
-use crate::eaccess::{list_all_characters, list_characters, CharacterEntry};
+use crate::eaccess::{list_all_characters, CharacterEntry};
 use eframe::egui;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
@@ -195,11 +195,8 @@ pub struct LoginApp {
     // Add Account sub-tab
     add_acct_username: String,
     add_acct_password: String,
-    add_acct_show_password: bool,
     add_acct_status: String,
     add_acct_fetching: bool,
-    add_acct_chars: Vec<CharacterEntry>,
-    add_acct_tree_selected: Option<usize>,
     add_acct_tx: SyncSender<Result<Vec<CharacterEntry>, String>>,
     add_acct_rx: Receiver<Result<Vec<CharacterEntry>, String>>,
 
@@ -296,11 +293,8 @@ impl LoginApp {
             add_char_custom_launch_dir: String::new(),
             add_acct_username: String::new(),
             add_acct_password: String::new(),
-            add_acct_show_password: false,
             add_acct_status: String::new(),
             add_acct_fetching: false,
-            add_acct_chars: Vec::new(),
-            add_acct_tree_selected: None,
             add_acct_tx,
             add_acct_rx,
             app_config: crate::app_config::AppConfig::load(),
@@ -319,14 +313,6 @@ impl LoginApp {
         }
     }
 
-    fn game_name(code: &str) -> &'static str {
-        for &(c, n) in GAME_CODES {
-            if c == code {
-                return n;
-            }
-        }
-        "Unknown"
-    }
 }
 
 impl Default for LoginApp {
@@ -412,12 +398,42 @@ impl eframe::App for LoginApp {
             self.add_acct_fetching = false;
             match res {
                 Ok(chars) => {
-                    self.add_acct_chars = chars;
-                    self.add_acct_tree_selected = None;
-                    self.add_acct_status = format!(
-                        "Found {} character(s). Select and click Add Account.",
-                        self.add_acct_chars.len()
-                    );
+                    // Single-click Add Account (matching lich-5): save account + ALL characters now
+                    let account = self.add_acct_username.clone();
+                    let password = self.add_acct_password.clone();
+                    if let Err(e) = self.store.add_account(&account, &password, self.key.as_ref()) {
+                        self.add_acct_status = format!("Failed to save account: {e}");
+                    } else {
+                        // Add ALL characters with their game_code/game_name from server + default frontend
+                        for ch in &chars {
+                            self.store.add_character(
+                                &account,
+                                &ch.name,
+                                &ch.game_code,
+                                &ch.game_name,
+                                "stormfront", // default frontend (matching lich-5 default)
+                                None,
+                                None,
+                            );
+                        }
+                        match self.store.save() {
+                            Ok(()) => {
+                                self.add_acct_status = format!(
+                                    "Account '{}' added successfully with {} character(s).",
+                                    account, chars.len()
+                                );
+                                self.add_acct_username.clear();
+                                self.add_acct_password.clear();
+                                // Switch back to Accounts tab
+                                self.acct_sub_tab = AcctSubTab::Accounts;
+                                self.acct_sub_tab_idx = 0;
+                                self.accounts_status = self.add_acct_status.clone();
+                            }
+                            Err(e) => {
+                                self.add_acct_status = format!("Failed to save: {e}");
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     self.add_acct_status = format!("Error: {e}");
@@ -1708,8 +1724,13 @@ impl LoginApp {
 
         ui.add_space(6.0);
 
-        // Add Character button — right-aligned
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+        // Button row: Back to Accounts (left) + Add Character (right)
+        ui.horizontal(|ui| {
+            if ui.button("Back to Accounts").clicked() {
+                self.acct_sub_tab = AcctSubTab::Accounts;
+                self.acct_sub_tab_idx = 0;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             if ui.button("Add Character").clicked() {
                 if self.add_char_name.trim().is_empty() {
                     self.add_char_status = "Character name is required.".to_string();
@@ -1751,6 +1772,7 @@ impl LoginApp {
                     }
                 }
             }
+            });
         });
 
         if !self.add_char_status.is_empty() {
@@ -1766,159 +1788,94 @@ impl LoginApp {
     }
 
     fn show_acct_add_account_sub(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // Matching lich-5: Username + Password fields, then Back + Add Account buttons.
+        // On Add Account: validate → check exists → authenticate (legacy, all games)
+        // → save account + ALL characters with stormfront frontend → switch to Accounts tab.
+        // No TreeView, no two-step Connect flow. One click does everything.
         let palette = egui_theme::palette_from_ctx(ui.ctx());
-        let mut trigger_connect = false;
 
         egui::Grid::new("add_acct_grid")
             .num_columns(2)
             .spacing([12.0, 6.0])
             .show(ui, |ui| {
                 ui.label("Username:");
-                let r = ui.text_edit_singleline(&mut self.add_acct_username);
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    trigger_connect = true;
-                }
+                ui.text_edit_singleline(&mut self.add_acct_username);
                 ui.end_row();
 
                 ui.label("Password:");
-                let r = ui.add(
+                ui.add(
                     egui::TextEdit::singleline(&mut self.add_acct_password)
-                        .password(!self.add_acct_show_password),
+                        .password(true),
                 );
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    trigger_connect = true;
-                }
                 ui.end_row();
             });
 
-        ui.checkbox(&mut self.add_acct_show_password, "Show password");
         ui.add_space(6.0);
-
-        // Connect button
-        let connect_clicked = ui
-            .add_enabled(!self.add_acct_fetching, egui::Button::new("Connect"))
-            .clicked();
-
-        if connect_clicked || (trigger_connect && !self.add_acct_fetching) {
-            if self.add_acct_username.is_empty() {
-                self.add_acct_status = "Username is required.".to_string();
-            } else {
-                self.add_acct_fetching = true;
-                self.add_acct_status = "Fetching characters...".to_string();
-                self.add_acct_chars.clear();
-                self.add_acct_tree_selected = None;
-
-                let account = self.add_acct_username.clone();
-                let password = self.add_acct_password.clone();
-                let tx = self.add_acct_tx.clone();
-                let ctx = ctx.clone();
-
-                std::thread::spawn(move || {
-                    let rt = match tokio::runtime::Runtime::new() {
-                        Ok(rt) => rt,
-                        Err(e) => {
-                            let _ = tx.send(Err(e.to_string()));
-                            ctx.request_repaint();
-                            return;
-                        }
-                    };
-                    let result = rt.block_on(list_characters(&account, &password, "GS3"));
-                    let _ = tx.send(result.map_err(|e| format!("{e:#}")));
-                    ctx.request_repaint();
-                });
-            }
-        }
 
         if self.add_acct_fetching {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Connecting...");
+                ui.label("Adding account...");
             });
         }
 
-        // TreeView for fetched characters
-        if !self.add_acct_chars.is_empty() {
-            ui.add_space(6.0);
-
-            let columns = vec![
-                egui_theme::TreeColumn { label: "Game".into(), width: Some(140.0), sortable: false },
-                egui_theme::TreeColumn { label: "Character".into(), width: None, sortable: false },
-            ];
-
-            let mut tree_rows: Vec<egui_theme::TreeRow> = self
-                .add_acct_chars
-                .iter()
-                .map(|ch| egui_theme::TreeRow {
-                    cells: vec!["GemStone IV".to_string(), ch.name.clone()],
-                    children: vec![],
-                    expanded: false,
-                })
-                .collect();
-
-            egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
-                egui_theme::TreeView::new(
-                    "add_acct_chars",
-                    &columns,
-                    &mut tree_rows,
-                    &mut self.add_acct_tree_selected,
-                )
-                .show(ui);
-            });
-
-            ui.add_space(6.0);
-
-            // Add Account button — right-aligned
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                if ui.button("Add Account").clicked() {
-                    let account = self.add_acct_username.clone();
-                    let password = self.add_acct_password.clone();
-                    if account.is_empty() {
-                        self.add_acct_status = "Username is required.".to_string();
+        // Button row: Back to Accounts (left) + Add Account (right)
+        ui.horizontal(|ui| {
+            if ui.button("Back to Accounts").clicked() {
+                self.acct_sub_tab = AcctSubTab::Accounts;
+                self.acct_sub_tab_idx = 0;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                if ui.add_enabled(!self.add_acct_fetching, egui::Button::new("Add Account")).clicked() {
+                    if self.add_acct_username.is_empty() {
+                        self.add_acct_status = "Username cannot be empty.".to_string();
+                    } else if self.add_acct_password.is_empty() {
+                        self.add_acct_status = "Password cannot be empty.".to_string();
                     } else {
-                        let exists = self
-                            .store
-                            .accounts
-                            .iter()
-                            .any(|a| a.account.to_lowercase() == account.to_lowercase());
-                        if !exists {
-                            if let Err(e) = self.store.add_account(&account, &password, self.key.as_ref()) {
-                                self.add_acct_status = format!("Failed to save account: {e}");
-                                return;
-                            }
-                        }
-                        for ch in &self.add_acct_chars {
-                            self.store.add_character(
-                                &account,
-                                &ch.name,
-                                "GS3",
-                                Self::game_name("GS3"),
-                                "stormfront",
-                                None,
-                                None,
+                        // Check if account already exists
+                        let exists = self.store.accounts.iter()
+                            .any(|a| a.account.to_lowercase() == self.add_acct_username.to_lowercase());
+                        if exists {
+                            self.add_acct_status = format!(
+                                "Account '{}' already exists. Use 'Change Password' to update the password.",
+                                self.add_acct_username
                             );
-                        }
-                        match self.store.save() {
-                            Ok(()) => {
-                                self.add_acct_status = format!(
-                                    "Saved {} character(s) for '{account}'.",
-                                    self.add_acct_chars.len()
-                                );
-                                self.add_acct_chars.clear();
-                                self.add_acct_tree_selected = None;
-                            }
-                            Err(e) => {
-                                self.add_acct_status = format!("Failed to save: {e}");
-                            }
+                        } else {
+                            // Authenticate with eaccess (legacy mode — all games, all characters)
+                            self.add_acct_fetching = true;
+                            self.add_acct_status = "Authenticating and fetching characters...".to_string();
+
+                            let account = self.add_acct_username.clone();
+                            let password = self.add_acct_password.clone();
+                            let tx = self.add_acct_tx.clone();
+                            let ctx = ctx.clone();
+
+                            std::thread::spawn(move || {
+                                let rt = match tokio::runtime::Runtime::new() {
+                                    Ok(rt) => rt,
+                                    Err(e) => {
+                                        let _ = tx.send(Err(e.to_string()));
+                                        ctx.request_repaint();
+                                        return;
+                                    }
+                                };
+                                let result = rt.block_on(list_all_characters(&account, &password));
+                                let _ = tx.send(result.map_err(|e| format!("{e:#}")));
+                                ctx.request_repaint();
+                            });
                         }
                     }
                 }
             });
-        }
+        });
 
         if !self.add_acct_status.is_empty() {
+            ui.add_space(4.0);
             let color = if self.add_acct_status.starts_with("Error")
                 || self.add_acct_status.starts_with("Failed")
                 || self.add_acct_status.starts_with("Username")
+                || self.add_acct_status.starts_with("Password")
+                || self.add_acct_status.starts_with("Account '")
             {
                 palette.error
             } else {
