@@ -85,39 +85,49 @@ impl CredentialStore {
         Ok(())
     }
 
-    pub fn encrypt_password(password: &str, key: &[u8; 32]) -> Result<String> {
-        use aes_gcm::{
-            aead::{Aead, AeadCore, OsRng},
-            Aes256Gcm, KeyInit,
-        };
-        use base64::Engine as _;
-        let cipher = Aes256Gcm::new(key.into());
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-        let ciphertext = cipher
-            .encrypt(&nonce, password.as_bytes())
-            .map_err(|e| anyhow::anyhow!("encrypt: {e}"))?;
-        let mut combined = nonce.to_vec();
-        combined.extend_from_slice(&ciphertext);
-        Ok(base64::engine::general_purpose::STANDARD.encode(&combined))
-    }
-
-    pub fn decrypt_password(encrypted: &str, key: &[u8; 32]) -> Result<String> {
-        use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
-        use base64::Engine as _;
-        let bytes = base64::engine::general_purpose::STANDARD.decode(encrypted)?;
-        if bytes.len() < 12 {
-            anyhow::bail!("Invalid encrypted password");
+    pub fn encrypt_password(password: &str, key: Option<&[u8; 32]>) -> Result<String> {
+        match key {
+            None => Ok(password.to_string()),
+            Some(k) => {
+                use aes_gcm::{
+                    aead::{Aead, AeadCore, OsRng},
+                    Aes256Gcm, KeyInit,
+                };
+                use base64::Engine as _;
+                let cipher = Aes256Gcm::new(k.into());
+                let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+                let ciphertext = cipher
+                    .encrypt(&nonce, password.as_bytes())
+                    .map_err(|e| anyhow::anyhow!("encrypt: {e}"))?;
+                let mut combined = nonce.to_vec();
+                combined.extend_from_slice(&ciphertext);
+                Ok(base64::engine::general_purpose::STANDARD.encode(&combined))
+            }
         }
-        let (nonce_bytes, ct) = bytes.split_at(12);
-        let cipher = Aes256Gcm::new(key.into());
-        let nonce = Nonce::from_slice(nonce_bytes);
-        let plaintext = cipher
-            .decrypt(nonce, ct)
-            .map_err(|e| anyhow::anyhow!("decrypt: {e}"))?;
-        Ok(String::from_utf8(plaintext)?)
     }
 
-    pub fn add_account(&mut self, account: &str, password: &str, key: &[u8; 32]) -> Result<()> {
+    pub fn decrypt_password(encrypted: &str, key: Option<&[u8; 32]>) -> Result<String> {
+        match key {
+            None => Ok(encrypted.to_string()),
+            Some(k) => {
+                use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+                use base64::Engine as _;
+                let bytes = base64::engine::general_purpose::STANDARD.decode(encrypted)?;
+                if bytes.len() < 12 {
+                    anyhow::bail!("Invalid encrypted password");
+                }
+                let (nonce_bytes, ct) = bytes.split_at(12);
+                let cipher = Aes256Gcm::new(k.into());
+                let nonce = Nonce::from_slice(nonce_bytes);
+                let plaintext = cipher
+                    .decrypt(nonce, ct)
+                    .map_err(|e| anyhow::anyhow!("decrypt: {e}"))?;
+                Ok(String::from_utf8(plaintext)?)
+            }
+        }
+    }
+
+    pub fn add_account(&mut self, account: &str, password: &str, key: Option<&[u8; 32]>) -> Result<()> {
         let enc = Self::encrypt_password(password, key)?;
         self.accounts
             .retain(|a| a.account.to_lowercase() != account.to_lowercase());
@@ -190,7 +200,7 @@ impl CredentialStore {
             .retain(|a| a.account.to_lowercase() != account.to_lowercase());
     }
 
-    pub fn get_password(&self, account: &str, key: &[u8; 32]) -> Result<String> {
+    pub fn get_password(&self, account: &str, key: Option<&[u8; 32]>) -> Result<String> {
         let entry = self
             .accounts
             .iter()

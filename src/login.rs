@@ -142,7 +142,7 @@ pub struct LoginApp {
 
     // ── Saved Entry tab ───────────────────────────────────────────────
     store: CredentialStore,
-    key: [u8; 32],
+    key: Option<[u8; 32]>,
     saved_side_tab: usize,
     saved_status: String,
 
@@ -204,6 +204,19 @@ pub struct LoginApp {
     theme_config: crate::theme_config::ThemeConfig,
     theme_applied: bool,
 
+    // ── Encryption ────────────────────────────────────────────────────
+    enc_config: crate::encryption::EncryptionConfig,
+    master_password_prompt: bool,
+    master_password_input: String,
+    master_password_error: String,
+    // Encryption management dialog state
+    enc_new_mode: crate::encryption::EncryptionMode,
+    enc_new_password: String,
+    enc_confirm_password: String,
+    enc_current_password: String,
+    enc_status: String,
+    enc_show_dialog: bool,
+
     // ── Result ────────────────────────────────────────────────────────
     pub result: Option<LoginResult>,
 }
@@ -213,7 +226,18 @@ impl LoginApp {
         let (fetch_tx, fetch_rx) = sync_channel(1);
         let (add_acct_tx, add_acct_rx) = sync_channel(1);
         let (play_tx, play_rx) = sync_channel(1);
-        let key = CredentialStore::load_or_create_key().unwrap_or([0u8; 32]);
+        let enc_config = crate::encryption::EncryptionConfig::load();
+        let key = match enc_config.mode {
+            crate::encryption::EncryptionMode::Plaintext => None,
+            crate::encryption::EncryptionMode::Standard => {
+                Some(CredentialStore::load_or_create_key().unwrap_or([0u8; 32]))
+            }
+            crate::encryption::EncryptionMode::Enhanced => {
+                crate::encryption::get_key_from_keychain().ok().flatten()
+            }
+        };
+        let master_password_prompt =
+            enc_config.mode == crate::encryption::EncryptionMode::Enhanced && key.is_none();
         let store = CredentialStore::load().unwrap_or_default();
 
         Self {
@@ -270,6 +294,16 @@ impl LoginApp {
             add_acct_rx,
             theme_config: crate::theme_config::ThemeConfig::load(),
             theme_applied: false,
+            enc_new_mode: enc_config.mode.clone(),
+            enc_config,
+            master_password_prompt,
+            master_password_input: String::new(),
+            master_password_error: String::new(),
+            enc_new_password: String::new(),
+            enc_confirm_password: String::new(),
+            enc_current_password: String::new(),
+            enc_status: String::new(),
+            enc_show_dialog: false,
             result: None,
         }
     }
@@ -392,6 +426,50 @@ impl eframe::App for LoginApp {
             return;
         }
 
+        // Master password prompt for Enhanced mode
+        if self.master_password_prompt {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let palette = egui_theme::palette_from_ctx(ui.ctx());
+                ui.vertical_centered(|ui| {
+                    ui.add_space(60.0);
+                    ui.heading("Enter Master Password");
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("Your credentials are protected with a master password.")
+                            .color(palette.text_secondary),
+                    );
+                    ui.add_space(16.0);
+
+                    let field_width = 260.0;
+                    ui.horizontal(|ui| {
+                        ui.add_space((ui.available_width() - field_width - 80.0) / 2.0);
+                        ui.label("Password:");
+                        let resp = ui.add_sized(
+                            [field_width, 22.0],
+                            egui::TextEdit::singleline(&mut self.master_password_input)
+                                .password(true),
+                        );
+                        if resp.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            self.try_unlock_master_password();
+                        }
+                    });
+
+                    ui.add_space(12.0);
+                    if ui.button("Unlock").clicked() {
+                        self.try_unlock_master_password();
+                    }
+
+                    if !self.master_password_error.is_empty() {
+                        ui.add_space(8.0);
+                        ui.colored_label(palette.error, &self.master_password_error);
+                    }
+                });
+            });
+            return;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             // ── Top row: TabBar + theme ComboBox ──────────────────────────
             ui.horizontal(|ui| {
@@ -454,6 +532,9 @@ impl eframe::App for LoginApp {
                 MainTab::Accounts => self.show_accounts_tab(ui, ctx),
             }
         });
+
+        // Encryption mode change dialog (rendered as overlay Window)
+        self.show_encryption_dialog(ctx);
     }
 }
 
@@ -557,7 +638,7 @@ impl LoginApp {
                                         )
                                         .clicked()
                                     {
-                                        match self.store.get_password(account, &self.key) {
+                                        match self.store.get_password(account, self.key.as_ref()) {
                                             Ok(pw) => {
                                                 play_pending = Some(PendingPlay {
                                                     account: account.clone(),
@@ -655,7 +736,7 @@ impl LoginApp {
                                         {
                                             match self
                                                 .store
-                                                .get_password(&account_name, &self.key)
+                                                .get_password(&account_name, self.key.as_ref())
                                             {
                                                 Ok(pw) => {
                                                     play_pending = Some(PendingPlay {
@@ -1005,7 +1086,7 @@ impl LoginApp {
                             .any(|a| a.account.to_lowercase() == account.to_lowercase());
                         if !exists {
                             if let Err(e) =
-                                self.store.add_account(&account, &password, &self.key)
+                                self.store.add_account(&account, &password, self.key.as_ref())
                             {
                                 self.manual_status =
                                     format!("Failed to save account: {e}");
@@ -1187,7 +1268,7 @@ impl LoginApp {
                     if let Err(e) = self.store.add_account(
                         pw_acct,
                         &self.change_pw_value,
-                        &self.key,
+                        self.key.as_ref(),
                     ) {
                         self.accounts_status = format!("Error: {e}");
                     } else {
@@ -1480,7 +1561,7 @@ impl LoginApp {
                             .iter()
                             .any(|a| a.account.to_lowercase() == account.to_lowercase());
                         if !exists {
-                            if let Err(e) = self.store.add_account(&account, &password, &self.key) {
+                            if let Err(e) = self.store.add_account(&account, &password, self.key.as_ref()) {
                                 self.add_acct_status = format!("Failed to save account: {e}");
                                 return;
                             }
@@ -1528,10 +1609,353 @@ impl LoginApp {
     }
 
     fn show_encryption_management(&mut self, ui: &mut egui::Ui) {
+        let palette = egui_theme::palette_from_ctx(ui.ctx());
+
         ui.add_space(8.0);
-        ui.label("Current encryption mode: AES-256-GCM (local key)");
-        ui.add_space(8.0);
-        ui.add_enabled(false, egui::Button::new("Change Mode"))
-            .on_disabled_hover_text("Coming in a future update");
+
+        let mode_label = match self.enc_config.mode {
+            crate::encryption::EncryptionMode::Plaintext => "Plaintext (no encryption)",
+            crate::encryption::EncryptionMode::Standard => "Standard (AES-256-GCM, local key file)",
+            crate::encryption::EncryptionMode::Enhanced => {
+                "Enhanced (AES-256-GCM, master password + OS keychain)"
+            }
+        };
+        ui.horizontal(|ui| {
+            ui.label("Current mode:");
+            ui.label(egui::RichText::new(mode_label).strong());
+        });
+
+        ui.add_space(12.0);
+
+        if ui.button("Change Encryption Mode").clicked() {
+            self.enc_new_mode = self.enc_config.mode.clone();
+            self.enc_new_password.clear();
+            self.enc_confirm_password.clear();
+            self.enc_current_password.clear();
+            self.enc_status.clear();
+            self.enc_show_dialog = true;
+        }
+
+        if !self.enc_status.is_empty() && !self.enc_show_dialog {
+            ui.add_space(8.0);
+            let color = if self.enc_status.starts_with("Error")
+                || self.enc_status.starts_with("Failed")
+            {
+                palette.error
+            } else {
+                palette.success
+            };
+            ui.colored_label(color, &self.enc_status);
+        }
+    }
+
+    fn show_encryption_dialog(&mut self, ctx: &egui::Context) {
+        use crate::encryption::EncryptionMode;
+
+        if !self.enc_show_dialog {
+            return;
+        }
+
+        let mut open = true;
+        egui::Window::new("Change Encryption Mode")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(400.0)
+            .show(ctx, |ui| {
+                let palette = egui_theme::palette_from_ctx(ui.ctx());
+
+                ui.add_space(4.0);
+
+                ui.radio_value(
+                    &mut self.enc_new_mode,
+                    EncryptionMode::Plaintext,
+                    "Plaintext \u{2014} passwords stored unencrypted",
+                );
+                ui.radio_value(
+                    &mut self.enc_new_mode,
+                    EncryptionMode::Standard,
+                    "Standard \u{2014} encrypted with random key file",
+                );
+                ui.radio_value(
+                    &mut self.enc_new_mode,
+                    EncryptionMode::Enhanced,
+                    "Enhanced \u{2014} encrypted with master password + OS keychain",
+                );
+
+                // If Enhanced selected: show password fields + PasswordStrengthMeter
+                if self.enc_new_mode == EncryptionMode::Enhanced {
+                    ui.add_space(10.0);
+                    egui_theme::ThemedSeparator::fade().show(ui);
+                    ui.add_space(6.0);
+
+                    egui::Grid::new("enc_password_grid")
+                        .num_columns(2)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("New Master Password:");
+                            ui.add_sized(
+                                [220.0, 22.0],
+                                egui::TextEdit::singleline(&mut self.enc_new_password)
+                                    .password(true),
+                            );
+                            ui.end_row();
+
+                            ui.label("Confirm Password:");
+                            ui.add_sized(
+                                [220.0, 22.0],
+                                egui::TextEdit::singleline(&mut self.enc_confirm_password)
+                                    .password(true),
+                            );
+                            ui.end_row();
+                        });
+
+                    ui.add_space(6.0);
+
+                    egui_theme::PasswordStrengthMeter::new(&self.enc_new_password)
+                        .rule("Uppercase letter", |p| p.chars().any(|c| c.is_uppercase()))
+                        .rule("Lowercase letter", |p| p.chars().any(|c| c.is_lowercase()))
+                        .rule("Number", |p| p.chars().any(|c| c.is_numeric()))
+                        .rule("Special character", |p| {
+                            p.chars().any(|c| !c.is_alphanumeric())
+                        })
+                        .rule("At least 12 characters", |p| p.len() >= 12)
+                        .show(ui);
+
+                    ui.add_space(4.0);
+
+                    // Match indicator
+                    if !self.enc_new_password.is_empty()
+                        && !self.enc_confirm_password.is_empty()
+                    {
+                        if self.enc_new_password == self.enc_confirm_password {
+                            ui.colored_label(palette.success, "\u{2713} Passwords match");
+                        } else {
+                            ui.colored_label(palette.error, "\u{2717} Passwords do not match");
+                        }
+                    }
+                }
+
+                // If switching FROM Enhanced: prompt current password
+                if self.enc_config.mode == EncryptionMode::Enhanced
+                    && self.enc_new_mode != EncryptionMode::Enhanced
+                {
+                    ui.add_space(10.0);
+                    egui_theme::ThemedSeparator::fade().show(ui);
+                    ui.add_space(6.0);
+                    ui.label("Current master password (to verify):");
+                    ui.add_sized(
+                        [220.0, 22.0],
+                        egui::TextEdit::singleline(&mut self.enc_current_password)
+                            .password(true),
+                    );
+                }
+
+                ui.add_space(12.0);
+
+                // Status message
+                if !self.enc_status.is_empty() {
+                    let color = if self.enc_status.starts_with("Error")
+                        || self.enc_status.starts_with("Failed")
+                    {
+                        palette.error
+                    } else {
+                        palette.success
+                    };
+                    ui.colored_label(color, &self.enc_status);
+                    ui.add_space(4.0);
+                }
+
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.enc_show_dialog = false;
+                            self.enc_status.clear();
+                        }
+                        if ui.button("Apply").clicked() {
+                            self.apply_encryption_mode_change();
+                        }
+                    });
+                });
+            });
+
+        if !open {
+            self.enc_show_dialog = false;
+            self.enc_status.clear();
+        }
+    }
+
+    fn try_unlock_master_password(&mut self) {
+        if self.master_password_input.is_empty() {
+            self.master_password_error = "Please enter your master password.".to_string();
+            return;
+        }
+
+        match crate::encryption::validate_master_password(
+            &self.master_password_input,
+            &self.enc_config,
+        ) {
+            Some(key) => {
+                // Store in keychain for future sessions (ignore errors)
+                let _ = crate::encryption::store_key_in_keychain(&key);
+                self.key = Some(key);
+                self.master_password_prompt = false;
+                self.master_password_input.clear();
+                self.master_password_error.clear();
+            }
+            None => {
+                self.master_password_error = "Incorrect master password.".to_string();
+                self.master_password_input.clear();
+            }
+        }
+    }
+
+    fn apply_encryption_mode_change(&mut self) {
+        use crate::encryption::EncryptionMode;
+
+        let old_mode = &self.enc_config.mode;
+        let new_mode = &self.enc_new_mode;
+
+        // No change
+        if old_mode == new_mode {
+            self.enc_status = "Mode unchanged.".to_string();
+            return;
+        }
+
+        // Validate inputs for Enhanced mode
+        if *new_mode == EncryptionMode::Enhanced {
+            if self.enc_new_password.is_empty() {
+                self.enc_status = "Error: Master password is required.".to_string();
+                return;
+            }
+            if self.enc_new_password != self.enc_confirm_password {
+                self.enc_status = "Error: Passwords do not match.".to_string();
+                return;
+            }
+            if self.enc_new_password.len() < 8 {
+                self.enc_status =
+                    "Error: Password must be at least 8 characters.".to_string();
+                return;
+            }
+        }
+
+        // If switching FROM Enhanced: verify current password
+        if *old_mode == EncryptionMode::Enhanced && *new_mode != EncryptionMode::Enhanced {
+            if self.enc_current_password.is_empty() {
+                self.enc_status =
+                    "Error: Current master password is required to switch away from Enhanced mode."
+                        .to_string();
+                return;
+            }
+            match crate::encryption::validate_master_password(
+                &self.enc_current_password,
+                &self.enc_config,
+            ) {
+                Some(_) => {} // valid — proceed
+                None => {
+                    self.enc_status = "Error: Incorrect current master password.".to_string();
+                    return;
+                }
+            }
+        }
+
+        // Determine old key
+        let old_key: Option<[u8; 32]> = self.key;
+
+        // Determine new key
+        let new_key: Option<[u8; 32]>;
+        let mut new_config = self.enc_config.clone();
+        new_config.mode = new_mode.clone();
+
+        match new_mode {
+            EncryptionMode::Plaintext => {
+                new_key = None;
+                new_config.test_value = None;
+                new_config.salt = None;
+            }
+            EncryptionMode::Standard => {
+                // Generate or load a random key file
+                match CredentialStore::load_or_create_key() {
+                    Ok(k) => new_key = Some(k),
+                    Err(e) => {
+                        self.enc_status = format!("Error: Failed to create key file: {e}");
+                        return;
+                    }
+                }
+                new_config.test_value = None;
+                new_config.salt = None;
+            }
+            EncryptionMode::Enhanced => {
+                use base64::Engine as _;
+                let salt = crate::encryption::generate_salt();
+                let derived = crate::encryption::derive_key(&self.enc_new_password, &salt);
+                match crate::encryption::create_test_value(&derived) {
+                    Ok(tv) => {
+                        new_config.test_value = Some(tv);
+                        new_config.salt = Some(
+                            base64::engine::general_purpose::STANDARD.encode(&salt),
+                        );
+                        new_key = Some(derived);
+                    }
+                    Err(e) => {
+                        self.enc_status =
+                            format!("Error: Failed to create test value: {e}");
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Re-encrypt all passwords
+        if let Err(e) = crate::encryption::reencrypt_all(
+            &mut self.store,
+            old_key.as_ref(),
+            new_key.as_ref(),
+        ) {
+            self.enc_status = format!("Error: Re-encryption failed: {e}");
+            return;
+        }
+
+        // Save credential store
+        if let Err(e) = self.store.save() {
+            self.enc_status = format!("Error: Failed to save credentials: {e}");
+            return;
+        }
+
+        // Save encryption config
+        if let Err(e) = new_config.save() {
+            self.enc_status = format!("Error: Failed to save encryption config: {e}");
+            return;
+        }
+
+        // Update keychain
+        match new_mode {
+            EncryptionMode::Enhanced => {
+                if let Some(ref k) = new_key {
+                    let _ = crate::encryption::store_key_in_keychain(k);
+                }
+            }
+            _ => {
+                // Clear keychain when leaving Enhanced mode
+                let _ = crate::encryption::clear_keychain();
+            }
+        }
+
+        // Update self state
+        self.key = new_key;
+        self.enc_config = new_config;
+        self.enc_show_dialog = false;
+        self.enc_new_password.clear();
+        self.enc_confirm_password.clear();
+        self.enc_current_password.clear();
+        self.enc_status = format!(
+            "Encryption mode changed to {}.",
+            match new_mode {
+                EncryptionMode::Plaintext => "Plaintext",
+                EncryptionMode::Standard => "Standard",
+                EncryptionMode::Enhanced => "Enhanced",
+            }
+        );
     }
 }
