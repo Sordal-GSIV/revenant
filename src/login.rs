@@ -560,16 +560,9 @@ impl LoginApp {
         let mut remove_char: Option<(String, String, String)> = None;
 
         // Build tab labels: FAVORITES (if any) + account names UPPERCASED
-        let has_favorites = self
-            .store
-            .accounts
-            .iter()
-            .any(|a| a.characters.iter().any(|c| c.favorite));
-
         let mut tab_labels: Vec<String> = Vec::new();
-        if has_favorites {
-            tab_labels.push("\u{2605} FAVORITES".to_string());
-        }
+        // FAVORITES tab always shown (even when empty)
+        tab_labels.push("\u{2605} FAVORITES".to_string());
         for acct in &self.store.accounts {
             tab_labels.push(acct.account.to_uppercase());
         }
@@ -584,12 +577,9 @@ impl LoginApp {
         egui_theme::SideTabBar::new("saved_tabs", &mut self.saved_side_tab, &tab_label_refs)
             .tab_width(130.0)
             .show(ui, |ui, selected_idx| {
-                let is_favorites_tab = has_favorites && selected_idx == 0;
-                let account_idx = if has_favorites {
-                    if selected_idx == 0 { None } else { Some(selected_idx - 1) }
-                } else {
-                    Some(selected_idx)
-                };
+                // FAVORITES is always tab 0, accounts start at index 1
+                let is_favorites_tab = selected_idx == 0;
+                let account_idx = if selected_idx == 0 { None } else { Some(selected_idx - 1) };
 
                 if is_favorites_tab {
                     // ── Favorites view ────────────────────────────────────
@@ -641,9 +631,12 @@ impl LoginApp {
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             let frontend_display = Frontend::from_str(frontend_str).display_name();
+                                            let star_prefix = if self.store.accounts.iter().any(|a| {
+                                                a.characters.iter().any(|c| c.name == *name && c.game_code == *game_code && c.favorite)
+                                            }) { "\u{2605} " } else { "" };
                                             let play_label = format!(
-                                                "\u{25B6} {}    {}    [{}]",
-                                                name, game_name, frontend_display
+                                                "{}{}    {}    {}",
+                                                star_prefix, name, game_name, frontend_display
                                             );
                                             if ui
                                                 .add_enabled(
@@ -817,9 +810,12 @@ impl LoginApp {
                                     } else {
                                         ui.horizontal(|ui| {
                                             let frontend_display = Frontend::from_str(frontend_str).display_name();
+                                            let star_prefix = if self.store.accounts.iter().any(|a| {
+                                                a.characters.iter().any(|c| c.name == *name && c.game_code == *game_code && c.favorite)
+                                            }) { "\u{2605} " } else { "" };
                                             let play_label = format!(
-                                                "\u{25B6} {}    {}    [{}]",
-                                                name, game_name, frontend_display
+                                                "{}{}    {}    {}",
+                                                star_prefix, name, game_name, frontend_display
                                             );
                                             if ui
                                                 .add_enabled(
@@ -1013,7 +1009,7 @@ impl LoginApp {
 
         // Character list — fixed size with left+right padding
         let columns = vec![
-            egui_theme::TreeColumn { label: "Game".into(), width: Some(140.0), sortable: true },
+            egui_theme::TreeColumn { label: "Game".into(), width: Some(180.0), sortable: true },
             egui_theme::TreeColumn { label: "Character".into(), width: None, sortable: true },
         ];
 
