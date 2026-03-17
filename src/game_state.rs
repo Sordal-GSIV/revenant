@@ -323,7 +323,11 @@ impl GameState {
             XmlEvent::RoomName { name }            => self.room_name = name,
             XmlEvent::RoomDescription { text }     => self.room_description = text,
             XmlEvent::RoomExits { exits, raw }      => { self.room_exits = exits; self.room_exits_string = raw; }
-            XmlEvent::RoomId { id }                => { self.room_id = Some(id); self.room_count += 1; },
+            XmlEvent::RoomId { id }                => { self.room_id = Some(id); self.room_count += 1; }
+            XmlEvent::RoomCountBump                => { self.room_count += 1; }
+            XmlEvent::RoomIdOnly { id }            => { self.room_id = Some(id); }
+            XmlEvent::ClearActiveSpells            => { self.active_spells.clear(); }
+            XmlEvent::GameDetected { game }        => { self.game = game; }
             XmlEvent::PreparedSpell { name }       => self.prepared_spell = Some(name),
             XmlEvent::SpellCleared                 => self.prepared_spell = None,
             XmlEvent::Level { value }              => self.level = value,

@@ -1,6 +1,7 @@
 use quick_xml::events::Event;
 use quick_xml::Reader;
 pub use crate::game_obj::ObjCategory;
+use crate::game_state::Game;
 
 /// Which hand slot an object update refers to.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +69,14 @@ pub enum XmlEvent {
     DialogEntry { dialog_id: String, entry_id: String, name: String, duration_secs: u32 },
     /// Text emitted inside a named stream (bounty, society, etc.).
     StreamText { stream_id: String, text: String },
+    /// DR dual-compass room count bump (second compass close = room transition).
+    RoomCountBump,
+    /// DR room ID extracted from streamWindow subtitle (does NOT increment room_count).
+    RoomIdOnly { id: u32 },
+    /// Clear all active spells (DR percWindow flush).
+    ClearActiveSpells,
+    /// Auto-detected game from settingsInfo instance attribute.
+    GameDetected { game: Game },
     /// Room name inside the familiar's stream.
     FamiliarRoomName { name: String },
     /// Room description text inside the familiar's stream.
@@ -119,10 +128,18 @@ pub struct StreamParser {
     fam_exits: Vec<String>,
     /// Which `<dialogData id="...">` is currently open, if any.
     current_dialog: Option<String>,
+    /// Which game we are parsing for (affects compass, percWindow, etc.).
+    game: Game,
+    /// DR: toggles on first `</compass>`, emits RoomCountBump on second.
+    dr_second_compass: bool,
+    /// DR: whether we are currently tracking percWindow spell lines.
+    dr_perc_tracking: bool,
+    /// DR: accumulated spell entries from percWindow text lines.
+    dr_perc_spells: Vec<(String, Option<u32>)>,
 }
 
 impl StreamParser {
-    pub fn new() -> Self {
+    pub fn new(game: Game) -> Self {
         Self {
             buf: String::new(),
             current_style: None,
@@ -133,6 +150,19 @@ impl StreamParser {
             fam_mode: FamMode::None,
             fam_exits: Vec::new(),
             current_dialog: None,
+            game,
+            dr_second_compass: false,
+            dr_perc_tracking: false,
+            dr_perc_spells: Vec::new(),
+        }
+    }
+
+    /// Whether it is safe for scripts to inject `respond()` output to the client.
+    /// In DR, injecting text while inside a stream or styled block corrupts the FE display.
+    pub fn safe_to_respond(&self) -> bool {
+        match self.game {
+            Game::DragonRealms => self.current_stream.is_none() && !self.in_bold && self.current_style.is_none(),
+            Game::GemStone => true,
         }
     }
 
@@ -199,6 +229,16 @@ impl StreamParser {
                 "dialogData" => {
                     self.current_dialog = None;
                 }
+                "compass" => {
+                    if matches!(self.game, Game::DragonRealms) {
+                        if self.dr_second_compass {
+                            self.dr_second_compass = false;
+                            events.push(XmlEvent::RoomCountBump);
+                        } else {
+                            self.dr_second_compass = true;
+                        }
+                    }
+                }
                 _ => {}
             }
             return;
@@ -247,6 +287,10 @@ impl StreamParser {
                             self.fam_mode = FamMode::None;
                             self.fam_exits.clear();
                         }
+                        if matches!(self.game, Game::DragonRealms) && id == "percWindow" {
+                            self.dr_perc_tracking = true;
+                            self.dr_perc_spells.clear();
+                        }
                         self.current_stream = Some(id.clone());
                         events.push(ev);
                     }
@@ -255,6 +299,13 @@ impl StreamParser {
                             let exits = std::mem::take(&mut self.fam_exits);
                             events.push(XmlEvent::FamiliarRoomExits { exits });
                             self.fam_mode = FamMode::None;
+                        }
+                        if id == "percWindow" && self.dr_perc_tracking {
+                            events.push(XmlEvent::ClearActiveSpells);
+                            for (name, duration) in std::mem::take(&mut self.dr_perc_spells) {
+                                events.push(XmlEvent::ActiveSpell { name, duration });
+                            }
+                            self.dr_perc_tracking = false;
                         }
                         events.push(ev);
                         self.current_stream = None;
@@ -284,10 +335,51 @@ impl StreamParser {
                 let tag = inner.split_whitespace().next().unwrap_or("").to_string();
                 events.push(XmlEvent::Unknown { tag });
             }
+
+            // DR: extract room ID and room name from streamWindow subtitle
+            if matches!(self.game, Game::DragonRealms) && tag_name_sc == "streamWindow" {
+                let attrs = attrs_from_xml(&xml);
+                if attr(&attrs, "id").as_deref() == Some("main") {
+                    if let Some(subtitle) = attr(&attrs, "subtitle") {
+                        // Extract room title from brackets: [Room Name]
+                        if let Some(start) = subtitle.find('[') {
+                            if let Some(end) = subtitle.find(']') {
+                                events.push(XmlEvent::RoomName { name: subtitle[start..=end].to_string() });
+                            }
+                        }
+                        // Extract UID from parentheses: (12345)
+                        if let Some(ps) = subtitle.rfind('(') {
+                            if let Some(pe) = subtitle.rfind(')') {
+                                if let Ok(uid) = subtitle[ps+1..pe].trim().parse::<u32>() {
+                                    events.push(XmlEvent::RoomIdOnly { id: uid });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             // Start tag: <tag attr="val">
             let tag_name = inner.split_whitespace().next().unwrap_or("");
             match tag_name {
+                "settingsInfo" => {
+                    let end_tag = "</settingsInfo>";
+                    match self.buf.find(end_tag) {
+                        None => {
+                            self.buf.insert_str(0, &format!("<{}>", inner));
+                        }
+                        Some(offset) => {
+                            self.buf.drain(..offset + end_tag.len());
+                            let xml = format!("<{}/>", inner);
+                            let attrs = attrs_from_xml(&xml);
+                            if let Some(instance) = attr(&attrs, "instance") {
+                                let game = Game::from_code(&instance);
+                                self.game = game.clone();
+                                events.push(XmlEvent::GameDetected { game });
+                            }
+                        }
+                    }
+                }
                 "prompt" | "spell" => {
                     // Need to find the matching end tag before we can parse
                     let end_tag = format!("</{}>", tag_name);
@@ -444,12 +536,12 @@ impl StreamParser {
 }
 
 impl Default for StreamParser {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self { Self::new(Game::default()) }
 }
 
 /// Convenience wrapper for tests: parse a static string as a single feed.
 pub fn parse_chunk(input: &str) -> Vec<XmlEvent> {
-    StreamParser::new().feed(input)
+    StreamParser::new(Game::default()).feed(input)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -556,10 +648,16 @@ impl StreamParser {
                 }
             }
             Some(stream_id) => {
-                events.push(XmlEvent::StreamText {
-                    stream_id: stream_id.to_string(),
-                    text: s.to_string(),
-                });
+                if self.dr_perc_tracking && stream_id == "percWindow" {
+                    if let Some(entry) = parse_dr_spell_line(s) {
+                        self.dr_perc_spells.push(entry);
+                    }
+                } else {
+                    events.push(XmlEvent::StreamText {
+                        stream_id: stream_id.to_string(),
+                        text: s.to_string(),
+                    });
+                }
             }
             None => {
                 match self.current_style.as_deref() {
@@ -745,6 +843,58 @@ fn parse_exits(title: &str) -> Vec<String> {
 
 /// Parse injury image name into (wound, scar) severity.
 /// Examples: "Injury3" -> (3, 0), "Scar1" -> (0, 1), "Nsys2" -> (2, 0), "" -> (0, 0)
+/// Parse a DR percWindow spell line into (name, duration).
+/// Formats:
+///   "Spell Name (HH:MM:SS)" → timed in seconds
+///   "Spell Name (Indefinite)" → u32::MAX
+///   "Spell Name (OM)" or "(fading)" → 0
+///   "Spell Name (X%)" → 0 (stellar)
+///   "Spell Name (N roisaen)" → N*15 seconds
+///   "Spell Name (N anlaen)" → N*900 seconds
+///   "Spell Name" (no parens) → u32::MAX (indefinite)
+fn parse_dr_spell_line(line: &str) -> Option<(String, Option<u32>)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() { return None; }
+
+    if let Some(paren_start) = trimmed.rfind('(') {
+        if let Some(paren_end) = trimmed.rfind(')') {
+            let name = trimmed[..paren_start].trim().to_string();
+            if name.is_empty() { return None; }
+            let inside = trimmed[paren_start+1..paren_end].trim();
+            let duration = if inside.eq_ignore_ascii_case("indefinite") {
+                Some(u32::MAX)
+            } else if inside.eq_ignore_ascii_case("fading") || inside == "OM" {
+                Some(0)
+            } else if inside.ends_with('%') {
+                Some(0)
+            } else if inside.contains("roisaen") {
+                let n: u32 = inside.split_whitespace().next()
+                    .and_then(|s| s.parse().ok()).unwrap_or(0);
+                Some(n * 15)
+            } else if inside.contains("anlaen") {
+                let n: u32 = inside.split_whitespace().next()
+                    .and_then(|s| s.parse().ok()).unwrap_or(0);
+                Some(n * 900)
+            } else {
+                // Try HH:MM:SS
+                let parts: Vec<&str> = inside.split(':').collect();
+                if parts.len() == 3 {
+                    let h: u32 = parts[0].parse().unwrap_or(0);
+                    let m: u32 = parts[1].parse().unwrap_or(0);
+                    let s: u32 = parts[2].parse().unwrap_or(0);
+                    Some(h * 3600 + m * 60 + s)
+                } else {
+                    Some(0)
+                }
+            };
+            return Some((name, duration));
+        }
+    }
+
+    // No parentheses — indefinite
+    Some((trimmed.to_string(), Some(u32::MAX)))
+}
+
 fn parse_injury_name(name: &str) -> (u8, u8) {
     let digit = name.chars().find(|c| c.is_ascii_digit())
         .and_then(|c| c.to_digit(10))
@@ -788,7 +938,7 @@ mod tests {
 
     #[test]
     fn test_stream_text_not_room_name() {
-        let mut parser = StreamParser::new();
+        let mut parser = StreamParser::default();
         let events = parser.feed(
             r#"<pushStream id="familiar"/><style id="roomName"/>Some Room<style id=""/><popStream id="familiar"/>"#
         );
@@ -798,7 +948,7 @@ mod tests {
 
     #[test]
     fn test_split_push_stream_across_feeds() {
-        let mut parser = StreamParser::new();
+        let mut parser = StreamParser::default();
         let e1 = parser.feed(r#"<pushStream id="bou"#);
         assert!(e1.is_empty());
         let e2 = parser.feed(r#"nty"/>task text<popStream id="bounty"/>"#);
@@ -817,7 +967,7 @@ mod tests {
 
     #[test]
     fn test_familiar_stream_npc_loot() {
-        let mut parser = StreamParser::new();
+        let mut parser = StreamParser::default();
         let events = parser.feed(concat!(
             r#"<pushStream id="familiar"/>"#,
             "You also see ",
@@ -836,7 +986,7 @@ mod tests {
 
     #[test]
     fn test_familiar_stream_pcs() {
-        let mut parser = StreamParser::new();
+        let mut parser = StreamParser::default();
         let events = parser.feed(concat!(
             r#"<pushStream id="familiar"/>"#,
             "Also here: ",
@@ -850,7 +1000,7 @@ mod tests {
 
     #[test]
     fn test_familiar_room_desc_objects() {
-        let mut parser = StreamParser::new();
+        let mut parser = StreamParser::default();
         let events = parser.feed(concat!(
             r#"<pushStream id="familiar"/>"#,
             r#"<style id="roomDesc"/>The trail is narrow. "#,
@@ -865,7 +1015,7 @@ mod tests {
 
     #[test]
     fn test_normal_parsing_unaffected_by_stream_code() {
-        let mut parser = StreamParser::new();
+        let mut parser = StreamParser::default();
         let events = parser.feed(
             r#"<style id="roomName"/>Town Square<style id=""/>"#
         );

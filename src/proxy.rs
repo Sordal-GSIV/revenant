@@ -212,6 +212,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
         let ds_tx = downstream_tx.clone();
         let gs = game_state.clone();
         let client_tx_down = client_tx.clone();
+        let parser_game = crate::game_state::Game::from_code(&config.game);
         let ds_hooks = engine.downstream_hooks.clone();
         let ds_lua = engine.lua.clone();
         let game_log = engine.game_log.clone();
@@ -234,7 +235,7 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
             };
 
             let mut buf = vec![0u8; 4096];
-            let mut parser = StreamParser::new();
+            let mut parser = StreamParser::new(parser_game);
             loop {
                 let n = srv_r.read(&mut buf).await?;
                 if n == 0 { break; }
@@ -293,7 +294,8 @@ async fn handle_client(client: TcpStream, config: Config, engine: Arc<ScriptEngi
                                         _ => {}
                                     }
                                 }
-                                crate::xml_parser::XmlEvent::RoomId { .. } => {
+                                crate::xml_parser::XmlEvent::RoomId { .. }
+                                | crate::xml_parser::XmlEvent::RoomCountBump => {
                                     go.clear_for_room_transition();
                                 }
                                 crate::xml_parser::XmlEvent::FamiliarRoomName { .. } => {
