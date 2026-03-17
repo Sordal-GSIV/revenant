@@ -479,7 +479,7 @@ impl eframe::App for LoginApp {
                 let before = self.tab_idx;
                 egui_theme::TabBar::new(
                     &mut self.tab_idx,
-                    &["Saved Entry", "Manual Entry", "Account Mgmt"],
+                    &["Saved Entry", "Manual Entry", "Account Management"],
                 )
                 .show(ui);
 
@@ -1334,16 +1334,15 @@ impl LoginApp {
             })
             .collect();
 
-        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-            egui_theme::TreeView::new(
-                "acct_tree",
-                &columns,
-                &mut tree_rows,
-                &mut self.acct_tree_selected,
-            )
-            .sort_state(&mut self.acct_tree_sort_col, &mut self.acct_tree_sort_asc)
-            .show(ui);
-        });
+        egui_theme::TreeView::new(
+            "acct_tree",
+            &columns,
+            &mut tree_rows,
+            &mut self.acct_tree_selected,
+        )
+        .sort_state(&mut self.acct_tree_sort_col, &mut self.acct_tree_sort_asc)
+        .min_body_height(200.0)
+        .show(ui);
 
         ui.add_space(8.0);
 
@@ -1370,9 +1369,17 @@ impl LoginApp {
                 }
             }
 
-            if ui.button("Add Account").clicked() {
-                self.acct_sub_tab = AcctSubTab::AddAccount;
-                self.acct_sub_tab_idx = 2;
+            // Change Password — only enabled when an account (not character) is selected
+            let can_change_pw = self.acct_tree_selected.map_or(false, |sel| {
+                sel < self.store.accounts.len()
+            });
+            if ui.add_enabled(can_change_pw, egui::Button::new("Change Password")).clicked() {
+                if let Some(sel) = self.acct_tree_selected {
+                    if sel < self.store.accounts.len() {
+                        self.change_pw_account = Some(self.store.accounts[sel].account.clone());
+                        self.change_pw_value.clear();
+                    }
+                }
             }
         });
 
