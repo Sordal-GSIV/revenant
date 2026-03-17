@@ -200,6 +200,18 @@ impl CredentialStore {
             .retain(|a| a.account.to_lowercase() != account.to_lowercase());
     }
 
+    pub fn remove_character(&mut self, account: &str, char_name: &str, game_code: &str) {
+        if let Some(a) = self
+            .accounts
+            .iter_mut()
+            .find(|a| a.account.to_lowercase() == account.to_lowercase())
+        {
+            a.characters.retain(|c| {
+                !(c.name.to_lowercase() == char_name.to_lowercase() && c.game_code == game_code)
+            });
+        }
+    }
+
     pub fn get_password(&self, account: &str, key: Option<&[u8; 32]>) -> Result<String> {
         let entry = self
             .accounts

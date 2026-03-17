@@ -1346,8 +1346,34 @@ impl LoginApp {
 
         ui.add_space(8.0);
 
-        // Button row
+        // Resolve selected row to account/character info
+        // The tree is: account rows (parent, expanded) with character children.
+        // Flat index walks: acct0, child0, child1, acct1, child2, ...
+        let selected_info: Option<(String, Option<(String, String)>)> = self.acct_tree_selected.and_then(|sel| {
+            let mut flat_idx = 0;
+            for acct in &self.store.accounts {
+                if flat_idx == sel {
+                    // Selected an account row
+                    return Some((acct.account.clone(), None));
+                }
+                flat_idx += 1;
+                for ch in &acct.characters {
+                    if flat_idx == sel {
+                        // Selected a character row
+                        return Some((acct.account.clone(), Some((ch.name.clone(), ch.game_code.clone()))));
+                    }
+                    flat_idx += 1;
+                }
+            }
+            None
+        });
+
+        let is_account_selected = selected_info.as_ref().map_or(false, |(_, ch)| ch.is_none());
+        let is_anything_selected = selected_info.is_some();
+
+        // Button row: Refresh, Remove, Change Password (matching lich-5)
         let mut remove_account: Option<String> = None;
+        let mut remove_character: Option<(String, String, String)> = None;
 
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
@@ -1355,30 +1381,30 @@ impl LoginApp {
                 self.accounts_status.clear();
             }
 
+            // Remove — works on both accounts and characters (like lich-5)
             if ui
-                .add(egui::Button::new(
-                    egui::RichText::new("Remove Account").color(palette.error),
-                ))
+                .add_enabled(
+                    is_anything_selected,
+                    egui::Button::new(egui::RichText::new("Remove").color(palette.error)),
+                )
                 .clicked()
             {
-                // Find which account is selected (top-level row)
-                if let Some(sel) = self.acct_tree_selected {
-                    if sel < self.store.accounts.len() {
-                        remove_account = Some(self.store.accounts[sel].account.clone());
+                if let Some((acct, ch_info)) = &selected_info {
+                    if let Some((char_name, game_code)) = ch_info {
+                        // Remove character
+                        remove_character = Some((acct.clone(), char_name.clone(), game_code.clone()));
+                    } else {
+                        // Remove account
+                        remove_account = Some(acct.clone());
                     }
                 }
             }
 
             // Change Password — only enabled when an account (not character) is selected
-            let can_change_pw = self.acct_tree_selected.map_or(false, |sel| {
-                sel < self.store.accounts.len()
-            });
-            if ui.add_enabled(can_change_pw, egui::Button::new("Change Password")).clicked() {
-                if let Some(sel) = self.acct_tree_selected {
-                    if sel < self.store.accounts.len() {
-                        self.change_pw_account = Some(self.store.accounts[sel].account.clone());
-                        self.change_pw_value.clear();
-                    }
+            if ui.add_enabled(is_account_selected, egui::Button::new("Change Password")).clicked() {
+                if let Some((acct, _)) = &selected_info {
+                    self.change_pw_account = Some(acct.clone());
+                    self.change_pw_value.clear();
                 }
             }
         });
@@ -1417,6 +1443,12 @@ impl LoginApp {
             self.store.remove_account(&acct);
             let _ = self.store.save();
             self.accounts_status = format!("Removed account '{acct}'.");
+            self.acct_tree_selected = None;
+        }
+        if let Some((acct, char_name, game_code)) = remove_character {
+            self.store.remove_character(&acct, &char_name, &game_code);
+            let _ = self.store.save();
+            self.accounts_status = format!("Removed character '{char_name}' from '{acct}'.");
             self.acct_tree_selected = None;
         }
 
