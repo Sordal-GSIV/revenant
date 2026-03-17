@@ -117,6 +117,14 @@ pub fn register(engine: &ScriptEngine) -> LuaResult<()> {
                 Some(s) => Ok(LuaValue::String(lua.create_string(s)?)),
                 None => Ok(LuaValue::Nil),
             },
+            "login_time" => {
+                let elapsed = gs.login_time.elapsed().as_secs_f64();
+                Ok(LuaValue::Number(elapsed))
+            },
+            "stow_container_id" => match &gs.stow_container_id {
+                Some(id) => Ok(LuaValue::String(lua.create_string(id)?)),
+                None => Ok(LuaValue::Nil),
+            },
             _ => Ok(LuaValue::Nil),
         }
     })?)?;

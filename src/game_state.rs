@@ -213,7 +213,7 @@ impl BodyInjuries {
 }
 
 // Note: GameState intentionally omits PartialEq — Instant does not implement PartialEq
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct GameState {
     pub health: u32, pub max_health: u32,
     pub mana: u32,   pub max_mana: u32,
@@ -281,6 +281,58 @@ pub struct GameState {
     pub familiar_room_exits: Vec<String>,
 
     pub effects: std::collections::HashMap<String, std::collections::HashMap<String, Instant>>,
+
+    pub login_time: Instant,
+
+    // TODO: parse from XML `<container id="stow" ...>` if/when that tag appears in the stream
+    pub stow_container_id: Option<String>,
+}
+
+impl Default for GameState {
+    fn default() -> Self {
+        Self {
+            health: 0, max_health: 0,
+            mana: 0, max_mana: 0,
+            spirit: 0, max_spirit: 0,
+            stamina: 0, max_stamina: 0,
+            concentration: 0, max_concentration: 0,
+            roundtime_end: None,
+            cast_roundtime_end: None,
+            room_name: String::new(),
+            room_description: String::new(),
+            room_exits: Vec::new(),
+            room_exits_string: String::new(),
+            room_id: None,
+            prepared_spell: None,
+            active_spells: Vec::new(),
+            stance: Stance::default(),
+            mind: MindState::default(),
+            encumbrance: EncumbranceState::default(),
+            bleeding: false, stunned: false, dead: false, sleeping: false,
+            prone: false, sitting: false, kneeling: false,
+            standing: false, poisoned: false, diseased: false,
+            hidden: false, invisible: false, webbed: false,
+            joined: false, calmed: false, cutthroat: false,
+            silenced: false, bound: false,
+            right_hand: None, left_hand: None,
+            wounds: BodyInjuries::default(),
+            scars: BodyInjuries::default(),
+            server_time: 0,
+            prompt: String::new(),
+            level: 0, experience: 0,
+            game: Game::default(),
+            name: String::new(),
+            room_count: 0,
+            bounty_task: String::new(),
+            society_task: String::new(),
+            familiar_room_title: String::new(),
+            familiar_room_description: String::new(),
+            familiar_room_exits: Vec::new(),
+            effects: std::collections::HashMap::new(),
+            login_time: Instant::now(),
+            stow_container_id: None,
+        }
+    }
 }
 
 impl GameState {
