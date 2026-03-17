@@ -751,7 +751,7 @@ impl LoginApp {
                                                 ui.horizontal(|ui| {
                                                     let frontend_display = Frontend::from_str(frontend_str).display_name();
                                                     let play_label = format!(
-                                                        "\u{25B6} {}    {}    [{}]",
+                                                        "\u{2605} {}  |  {}  |  {}",
                                                         name, game_name, frontend_display
                                                     );
                                                     if ui
