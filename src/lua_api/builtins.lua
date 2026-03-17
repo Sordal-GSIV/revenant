@@ -583,6 +583,9 @@ function dothistimeout(cmd, timeout, patterns)
     return nil
 end
 
+-- Lich5 compatibility alias
+Script.start = Script.run
+
 -- Infomon CLI: intercept ;infomon commands upstream.
 UpstreamHook.add("__infomon_cli", function(line)
     local cmd = line:match("^;infomon%s*(.*)$")
@@ -623,3 +626,48 @@ UpstreamHook.add("__infomon_cli", function(line)
 
     return ""  -- swallow the command
 end)
+
+-- Injured: true if body part has any wound or scar > 0
+Injured = setmetatable({}, {
+    __index = function(_, key)
+        local w = Wounds[key]
+        local s = Scars[key]
+        if w == nil and s == nil then return nil end
+        return (w or 0) > 0 or (s or 0) > 0
+    end
+})
+
+-- Ephemeral session variables (gone on disconnect)
+SessionVars = {}
+
+-- Parse natural-language lists: "a kobold, a troll, and an ogre" → table
+function parse_list(text)
+    if not text or text == "" then return {} end
+    -- "a kobold, a troll, and an ogre" → {"a kobold", "a troll", "an ogre"}
+    text = text:gsub(",%s+and%s+", ", "):gsub("^and%s+", ""):gsub(",%s+", ",")
+    local result = {}
+    for item in text:gmatch("[^,]+") do
+        item = item:match("^%s*(.-)%s*$")
+        if item ~= "" then result[#result + 1] = item end
+    end
+    return result
+end
+
+-- Direction constants
+SHORTDIR = { north="n", south="s", east="e", west="w", northeast="ne", southeast="se", southwest="sw", northwest="nw", up="u", down="d", out="out" }
+LONGDIR = { n="north", s="south", e="east", w="west", ne="northeast", se="southeast", sw="southwest", nw="northwest", u="up", d="down" }
+DIRMAP = { n="A", ne="B", e="C", se="D", s="E", sw="F", w="G", nw="H", up="I", down="J", out="K" }
+
+-- Binary conversion utilities
+function dec2bin(n)
+    local result = ""
+    while n > 0 do
+        result = (n % 2) .. result
+        n = math.floor(n / 2)
+    end
+    return result == "" and "0" or result
+end
+
+function bin2dec(s)
+    return tonumber(s, 2) or 0
+end
