@@ -1,7 +1,7 @@
 #![cfg(feature = "login-gui")]
 
 use crate::credentials::CredentialStore;
-use crate::eaccess::{list_characters, CharacterEntry};
+use crate::eaccess::{list_all_characters, list_characters, CharacterEntry};
 use eframe::egui;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
@@ -152,11 +152,11 @@ pub struct LoginApp {
     connect_state: ConnectState,
     manual_selected_char: Option<usize>,
     manual_tree_selected: Option<usize>,
+    manual_tree_sort_col: Option<usize>,
+    manual_tree_sort_asc: bool,
     manual_save: bool,
     manual_favorite: bool,
     manual_status: String,
-    manual_game_idx: usize,
-    manual_game_code: String,
     manual_frontend: Frontend,
     manual_custom_launch_enabled: bool,
     manual_custom_launch: String,
@@ -201,7 +201,7 @@ pub struct LoginApp {
     add_acct_rx: Receiver<Result<Vec<CharacterEntry>, String>>,
 
     // ── Theme ─────────────────────────────────────────────────────────
-    theme_config: crate::theme_config::ThemeConfig,
+    app_config: crate::app_config::AppConfig,
     theme_applied: bool,
 
     // ── Encryption ────────────────────────────────────────────────────
@@ -252,11 +252,11 @@ impl LoginApp {
             connect_state: ConnectState::Idle,
             manual_selected_char: None,
             manual_tree_selected: None,
+            manual_tree_sort_col: Some(0),
+            manual_tree_sort_asc: true,
             manual_save: false,
             manual_favorite: false,
             manual_status: String::new(),
-            manual_game_idx: 0,
-            manual_game_code: GAME_CODES[0].0.to_string(),
             manual_frontend: Frontend::Wrayth,
             manual_custom_launch_enabled: false,
             manual_custom_launch: String::new(),
@@ -292,7 +292,7 @@ impl LoginApp {
             add_acct_tree_selected: None,
             add_acct_tx,
             add_acct_rx,
-            theme_config: crate::theme_config::ThemeConfig::load(),
+            app_config: crate::app_config::AppConfig::load(),
             theme_applied: false,
             enc_new_mode: enc_config.mode.clone(),
             enc_config,
@@ -349,7 +349,7 @@ impl LoginApp {
 impl eframe::App for LoginApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.theme_applied {
-            self.theme_config.to_theme().apply(ctx);
+            self.app_config.to_theme().apply(ctx);
             self.theme_applied = true;
         }
 
@@ -368,7 +368,7 @@ impl eframe::App for LoginApp {
                             custom_launch: pending.custom_launch,
                             custom_launch_dir: pending.custom_launch_dir,
                             session: Some(session),
-                            theme: self.theme_config.theme.clone(),
+                            theme: self.app_config.theme.clone(),
                         });
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -497,27 +497,19 @@ impl eframe::App for LoginApp {
 
                 // Push theme ComboBox to the right
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let themes = ["Slate", "Ember", "Fantasy"];
-                    let current_idx = match self.theme_config.theme.as_str() {
-                        "ember" => 1,
-                        "fantasy" => 2,
-                        _ => 0,
-                    };
+                    let themes = ["Slate", "Ember", "Fantasy", "Slate Light", "Ember Light", "Fantasy Light"];
+                    let keys = ["slate", "ember", "fantasy", "slate_light", "ember_light", "fantasy_light"];
+                    let current_idx = keys.iter().position(|&k| k == self.app_config.theme.as_str()).unwrap_or(0);
                     let mut selected = current_idx;
                     egui::ComboBox::from_id_salt("theme_selector")
-                        .width(80.0)
+                        .width(100.0)
                         .selected_text(themes[selected])
                         .show_ui(ui, |ui| {
                             for (i, name) in themes.iter().enumerate() {
                                 if ui.selectable_value(&mut selected, i, *name).clicked() {
-                                    let key = match i {
-                                        1 => "ember",
-                                        2 => "fantasy",
-                                        _ => "slate",
-                                    };
-                                    self.theme_config.theme = key.to_string();
-                                    self.theme_config.save();
-                                    self.theme_config.to_theme().apply(ui.ctx());
+                                    self.app_config.theme = keys[i].to_string();
+                                    self.app_config.save();
+                                    self.app_config.to_theme().apply(ui.ctx());
                                 }
                             }
                         });
@@ -535,6 +527,20 @@ impl eframe::App for LoginApp {
 
         // Encryption mode change dialog (rendered as overlay Window)
         self.show_encryption_dialog(ctx);
+
+        // Save window geometry on resize (throttle: only if changed by more than 1px)
+        let viewport_info = ctx.input(|i| i.viewport().inner_rect);
+        if let Some(rect) = viewport_info {
+            let w = rect.width();
+            let h = rect.height();
+            if (w - self.app_config.window_width).abs() > 1.0
+                || (h - self.app_config.window_height).abs() > 1.0
+            {
+                self.app_config.window_width = w;
+                self.app_config.window_height = h;
+                self.app_config.save();
+            }
+        }
     }
 }
 
@@ -624,64 +630,82 @@ impl LoginApp {
                                     last_game = Some(game_code.clone());
                                 }
 
-                                ui.horizontal(|ui| {
-                                    let frontend_display = Frontend::from_str(frontend_str).display_name();
-                                    let play_label = format!(
-                                        "\u{25B6} {}    {}    [{}]",
-                                        name, game_name, frontend_display
-                                    );
-                                    if ui
-                                        .add_enabled(
-                                            !authenticating,
-                                            egui::Button::new(&play_label)
-                                                .min_size(egui::vec2(280.0, 24.0)),
-                                        )
-                                        .clicked()
-                                    {
-                                        match self.store.get_password(account, self.key.as_ref()) {
-                                            Ok(pw) => {
-                                                play_pending = Some(PendingPlay {
-                                                    account: account.clone(),
-                                                    password: pw,
-                                                    game_code: game_code.clone(),
-                                                    character: name.clone(),
-                                                    frontend: Frontend::from_str(frontend_str),
-                                                    custom_launch: custom_launch.clone(),
-                                                    custom_launch_dir: custom_launch_dir.clone(),
-                                                });
+                                let gold = egui::Color32::from_rgb(0xDA, 0xA5, 0x20);
+                                let is_fantasy = self.app_config.theme == "fantasy"
+                                    || self.app_config.theme == "fantasy_light";
+                                let star_gold = if is_fantasy { palette.accent } else { gold };
+
+                                let row_resp = egui::Frame::new()
+                                    .fill(palette.elevated)
+                                    .inner_margin(egui::Margin::symmetric(0, 2))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let frontend_display = Frontend::from_str(frontend_str).display_name();
+                                            let play_label = format!(
+                                                "\u{25B6} {}    {}    [{}]",
+                                                name, game_name, frontend_display
+                                            );
+                                            if ui
+                                                .add_enabled(
+                                                    !authenticating,
+                                                    egui::Button::new(&play_label)
+                                                        .min_size(egui::vec2(280.0, 24.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                match self.store.get_password(account, self.key.as_ref()) {
+                                                    Ok(pw) => {
+                                                        play_pending = Some(PendingPlay {
+                                                            account: account.clone(),
+                                                            password: pw,
+                                                            game_code: game_code.clone(),
+                                                            character: name.clone(),
+                                                            frontend: Frontend::from_str(frontend_str),
+                                                            custom_launch: custom_launch.clone(),
+                                                            custom_launch_dir: custom_launch_dir.clone(),
+                                                        });
+                                                    }
+                                                    Err(e) => {
+                                                        self.saved_status =
+                                                            format!("Failed to decrypt password: {e}");
+                                                    }
+                                                }
                                             }
-                                            Err(e) => {
-                                                self.saved_status =
-                                                    format!("Failed to decrypt password: {e}");
+                                            // Star toggle (gold for favorite)
+                                            let star_text = egui::RichText::new("\u{2605}")
+                                                .color(star_gold);
+                                            if ui.button(star_text).clicked() {
+                                                toggle_fav = Some((
+                                                    account.clone(),
+                                                    name.clone(),
+                                                    game_code.clone(),
+                                                ));
                                             }
-                                        }
-                                    }
-                                    // Star toggle (gold for favorite)
-                                    let star_text = egui::RichText::new("\u{2605}")
-                                        .color(egui::Color32::from_rgb(218, 165, 32));
-                                    if ui.button(star_text).clicked() {
-                                        toggle_fav = Some((
-                                            account.clone(),
-                                            name.clone(),
-                                            game_code.clone(),
-                                        ));
-                                    }
-                                    // Remove button (red)
-                                    if ui
-                                        .add(egui::Button::new(
-                                            egui::RichText::new("Remove")
-                                                .color(palette.error)
-                                                .small(),
-                                        ))
-                                        .clicked()
-                                    {
-                                        remove_char = Some((
-                                            account.clone(),
-                                            name.clone(),
-                                            game_code.clone(),
-                                        ));
-                                    }
-                                });
+                                            // Remove button (red)
+                                            if ui
+                                                .add(egui::Button::new(
+                                                    egui::RichText::new("Remove")
+                                                        .color(palette.error)
+                                                        .small(),
+                                                ))
+                                                .clicked()
+                                            {
+                                                remove_char = Some((
+                                                    account.clone(),
+                                                    name.clone(),
+                                                    game_code.clone(),
+                                                ));
+                                            }
+                                        });
+                                    })
+                                    .response;
+
+                                // Paint 2px gold left border
+                                let rect = row_resp.rect;
+                                ui.painter().line_segment(
+                                    [rect.left_top(), rect.left_bottom()],
+                                    egui::Stroke::new(2.0, gold),
+                                );
                             }
                         });
                     }
@@ -720,70 +744,148 @@ impl LoginApp {
                                         ui.add_space(2.0);
                                         last_game = Some(game_code.clone());
                                     }
-                                    ui.horizontal(|ui| {
-                                        let frontend_display = Frontend::from_str(frontend_str).display_name();
-                                        let play_label = format!(
-                                            "\u{25B6} {}    {}    [{}]",
-                                            name, game_name, frontend_display
-                                        );
-                                        if ui
-                                            .add_enabled(
-                                                !authenticating,
-                                                egui::Button::new(&play_label)
-                                                    .min_size(egui::vec2(280.0, 24.0)),
-                                            )
-                                            .clicked()
-                                        {
-                                            match self
-                                                .store
-                                                .get_password(&account_name, self.key.as_ref())
-                                            {
-                                                Ok(pw) => {
-                                                    play_pending = Some(PendingPlay {
-                                                        account: account_name.clone(),
-                                                        password: pw,
-                                                        game_code: game_code.clone(),
-                                                        character: name.clone(),
-                                                        frontend: Frontend::from_str(frontend_str),
-                                                        custom_launch: custom_launch.clone(),
-                                                        custom_launch_dir: custom_launch_dir.clone(),
-                                                    });
-                                                }
-                                                Err(e) => {
-                                                    self.saved_status = format!(
-                                                        "Failed to decrypt password: {e}"
+                                    let gold = egui::Color32::from_rgb(0xDA, 0xA5, 0x20);
+                                    let is_fantasy = self.app_config.theme == "fantasy"
+                                        || self.app_config.theme == "fantasy_light";
+                                    let star_gold = if is_fantasy { palette.accent } else { gold };
+
+                                    let row_resp = if *is_fav {
+                                        egui::Frame::new()
+                                            .fill(palette.elevated)
+                                            .inner_margin(egui::Margin::symmetric(0, 2))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    let frontend_display = Frontend::from_str(frontend_str).display_name();
+                                                    let play_label = format!(
+                                                        "\u{25B6} {}    {}    [{}]",
+                                                        name, game_name, frontend_display
                                                     );
+                                                    if ui
+                                                        .add_enabled(
+                                                            !authenticating,
+                                                            egui::Button::new(&play_label)
+                                                                .min_size(egui::vec2(280.0, 24.0)),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        match self
+                                                            .store
+                                                            .get_password(&account_name, self.key.as_ref())
+                                                        {
+                                                            Ok(pw) => {
+                                                                play_pending = Some(PendingPlay {
+                                                                    account: account_name.clone(),
+                                                                    password: pw,
+                                                                    game_code: game_code.clone(),
+                                                                    character: name.clone(),
+                                                                    frontend: Frontend::from_str(frontend_str),
+                                                                    custom_launch: custom_launch.clone(),
+                                                                    custom_launch_dir: custom_launch_dir.clone(),
+                                                                });
+                                                            }
+                                                            Err(e) => {
+                                                                self.saved_status = format!(
+                                                                    "Failed to decrypt password: {e}"
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                    if ui.button(egui::RichText::new("\u{2605}").color(star_gold)).clicked() {
+                                                        toggle_fav = Some((
+                                                            account_name.clone(),
+                                                            name.clone(),
+                                                            game_code.clone(),
+                                                        ));
+                                                    }
+                                                    if ui
+                                                        .add(egui::Button::new(
+                                                            egui::RichText::new("Remove")
+                                                                .color(palette.error)
+                                                                .small(),
+                                                        ))
+                                                        .clicked()
+                                                    {
+                                                        remove_char = Some((
+                                                            account_name.clone(),
+                                                            name.clone(),
+                                                            game_code.clone(),
+                                                        ));
+                                                    }
+                                                });
+                                            })
+                                            .response
+                                    } else {
+                                        ui.horizontal(|ui| {
+                                            let frontend_display = Frontend::from_str(frontend_str).display_name();
+                                            let play_label = format!(
+                                                "\u{25B6} {}    {}    [{}]",
+                                                name, game_name, frontend_display
+                                            );
+                                            if ui
+                                                .add_enabled(
+                                                    !authenticating,
+                                                    egui::Button::new(&play_label)
+                                                        .min_size(egui::vec2(280.0, 24.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                match self
+                                                    .store
+                                                    .get_password(&account_name, self.key.as_ref())
+                                                {
+                                                    Ok(pw) => {
+                                                        play_pending = Some(PendingPlay {
+                                                            account: account_name.clone(),
+                                                            password: pw,
+                                                            game_code: game_code.clone(),
+                                                            character: name.clone(),
+                                                            frontend: Frontend::from_str(frontend_str),
+                                                            custom_launch: custom_launch.clone(),
+                                                            custom_launch_dir: custom_launch_dir.clone(),
+                                                        });
+                                                    }
+                                                    Err(e) => {
+                                                        self.saved_status = format!(
+                                                            "Failed to decrypt password: {e}"
+                                                        );
+                                                    }
                                                 }
                                             }
-                                        }
-                                        let star = if *is_fav { "\u{2605}" } else { "\u{2606}" };
-                                        let star_color = if *is_fav {
-                                            egui::Color32::from_rgb(218, 165, 32)
-                                        } else {
-                                            palette.text_secondary
-                                        };
-                                        if ui.button(egui::RichText::new(star).color(star_color)).clicked() {
-                                            toggle_fav = Some((
-                                                account_name.clone(),
-                                                name.clone(),
-                                                game_code.clone(),
-                                            ));
-                                        }
-                                        if ui
-                                            .add(egui::Button::new(
-                                                egui::RichText::new("Remove")
-                                                    .color(palette.error)
-                                                    .small(),
-                                            ))
-                                            .clicked()
-                                        {
-                                            remove_char = Some((
-                                                account_name.clone(),
-                                                name.clone(),
-                                                game_code.clone(),
-                                            ));
-                                        }
-                                    });
+                                            let star_color = palette.text_secondary;
+                                            if ui.button(egui::RichText::new("\u{2606}").color(star_color)).clicked() {
+                                                toggle_fav = Some((
+                                                    account_name.clone(),
+                                                    name.clone(),
+                                                    game_code.clone(),
+                                                ));
+                                            }
+                                            if ui
+                                                .add(egui::Button::new(
+                                                    egui::RichText::new("Remove")
+                                                        .color(palette.error)
+                                                        .small(),
+                                                ))
+                                                .clicked()
+                                            {
+                                                remove_char = Some((
+                                                    account_name.clone(),
+                                                    name.clone(),
+                                                    game_code.clone(),
+                                                ));
+                                            }
+                                        })
+                                        .response
+                                    };
+
+                                    // Paint 2px gold left border for favorites
+                                    if *is_fav {
+                                        let rect = row_resp.rect;
+                                        let painter = ui.painter();
+                                        painter.line_segment(
+                                            [rect.left_top(), rect.left_bottom()],
+                                            egui::Stroke::new(2.0, gold),
+                                        );
+                                    }
                                 }
                             });
                         }
@@ -843,50 +945,49 @@ impl LoginApp {
         let is_fetching = self.connect_state == ConnectState::Fetching;
         let is_connected = matches!(self.connect_state, ConnectState::Connected(_));
         let authenticating = self.play_state == PlayState::Authenticating;
+        let right_pad = 16.0;
 
-        // Login fields
+        // Login fields — right-aligned with padding
         let mut trigger_connect = false;
-        egui::Grid::new("manual_grid")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("User ID:");
-                let r = ui.add_enabled(
-                    !is_fetching,
-                    egui::TextEdit::singleline(&mut self.manual_account),
-                );
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    trigger_connect = true;
-                }
-                ui.end_row();
-
-                ui.label("Password:");
-                let r = ui.add_enabled(
-                    !is_fetching,
-                    egui::TextEdit::singleline(&mut self.manual_password).password(true),
-                );
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    trigger_connect = true;
-                }
-                ui.end_row();
-
-                ui.label("Game:");
-                egui::ComboBox::from_id_salt("manual_game")
-                    .selected_text(GAME_CODES[self.manual_game_idx.min(GAME_CODES.len() - 1)].1)
-                    .show_ui(ui, |ui| {
-                        for (i, &(code, name)) in GAME_CODES.iter().enumerate() {
-                            if ui.selectable_value(&mut self.manual_game_idx, i, name).clicked() {
-                                self.manual_game_code = code.to_string();
-                            }
+        ui.horizontal(|ui| {
+            ui.add_space(ui.available_width() * 0.15); // left indent
+            ui.vertical(|ui| {
+                let field_width = ui.available_width() - right_pad;
+                egui::Grid::new("manual_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("User ID:");
+                        let r = ui.add_enabled(
+                            !is_fetching,
+                            egui::TextEdit::singleline(&mut self.manual_account)
+                                .desired_width(field_width - 80.0),
+                        );
+                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            trigger_connect = true;
                         }
+                        ui.end_row();
+
+                        ui.label("Password:");
+                        let r = ui.add_enabled(
+                            !is_fetching,
+                            egui::TextEdit::singleline(&mut self.manual_password)
+                                .password(true)
+                                .desired_width(field_width - 80.0),
+                        );
+                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            trigger_connect = true;
+                        }
+                        ui.end_row();
                     });
-                ui.end_row();
             });
+        });
 
         ui.add_space(6.0);
 
-        // Connect / Disconnect buttons
-        ui.horizontal(|ui| {
+        // Disconnect (left) / Connect (right) — right-aligned with padding
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            ui.add_space(right_pad);
             if ui
                 .add_enabled(
                     !is_fetching && !is_connected,
@@ -910,65 +1011,90 @@ impl LoginApp {
 
         ui.add_space(6.0);
 
-        // Character list — TreeView
+        // Character list — fixed size with left+right padding
         let columns = vec![
-            egui_theme::TreeColumn { label: "Game".into(), width: Some(140.0), sortable: false },
-            egui_theme::TreeColumn { label: "Character".into(), width: None, sortable: false },
+            egui_theme::TreeColumn { label: "Game".into(), width: Some(140.0), sortable: true },
+            egui_theme::TreeColumn { label: "Character".into(), width: None, sortable: true },
         ];
 
-        egui::ScrollArea::vertical()
-            .max_height(160.0)
-            .show(ui, |ui| {
-                match &self.connect_state {
-                    ConnectState::Idle => {
-                        ui.label("");
-                    }
-                    ConnectState::Fetching => {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label("Connecting...");
-                        });
-                    }
-                    ConnectState::Connected(chars) => {
-                        let mut tree_rows: Vec<egui_theme::TreeRow> = chars
-                            .iter()
-                            .map(|ch| egui_theme::TreeRow {
-                                cells: vec![
-                                    Self::game_name(&self.manual_game_code).to_string(),
-                                    ch.name.clone(),
-                                ],
-                                children: vec![],
-                                expanded: false,
-                            })
-                            .collect();
+        ui.horizontal(|ui| {
+            ui.add_space(right_pad); // left padding
+            let list_width = ui.available_width() - right_pad; // right padding
+            ui.set_max_width(list_width);
+            egui::ScrollArea::vertical()
+                .max_height(160.0)
+                .show(ui, |ui| {
+                    match &self.connect_state {
+                        ConnectState::Idle => {
+                            ui.label("");
+                        }
+                        ConnectState::Fetching => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Connecting...");
+                            });
+                        }
+                        ConnectState::Connected(chars) => {
+                            let mut tree_rows: Vec<egui_theme::TreeRow> = chars
+                                .iter()
+                                .map(|ch| egui_theme::TreeRow {
+                                    cells: vec![
+                                        ch.game_name.clone(),
+                                        ch.name.clone(),
+                                    ],
+                                    children: vec![],
+                                    expanded: false,
+                                })
+                                .collect();
 
-                        let resp = egui_theme::TreeView::new(
-                            "manual_chars",
-                            &columns,
-                            &mut tree_rows,
-                            &mut self.manual_tree_selected,
-                        )
-                        .show(ui);
+                            // Sort by game name ascending (matching lich-5)
+                            if self.manual_tree_sort_col.is_some() {
+                                let col = self.manual_tree_sort_col.unwrap_or(0);
+                                tree_rows.sort_by(|a, b| {
+                                    let cmp = a.cells.get(col).cmp(&b.cells.get(col));
+                                    if self.manual_tree_sort_asc { cmp } else { cmp.reverse() }
+                                });
+                            }
 
-                        if resp.clicked_row.is_some() {
-                            self.manual_selected_char = self.manual_tree_selected;
+                            let resp = egui_theme::TreeView::new(
+                                "manual_chars",
+                                &columns,
+                                &mut tree_rows,
+                                &mut self.manual_tree_selected,
+                            )
+                            .sort_state(
+                                &mut self.manual_tree_sort_col,
+                                &mut self.manual_tree_sort_asc,
+                            )
+                            .show(ui);
+
+                            if resp.clicked_row.is_some() {
+                                self.manual_selected_char = self.manual_tree_selected;
+                            }
                         }
                     }
-                }
-            });
+                });
+        });
 
         ui.add_space(6.0);
 
-        // Frontend selection
+        // Frontend selection — platform-gated
         ui.horizontal(|ui| {
-            ui.label("Frontend:");
             ui.radio_value(&mut self.manual_frontend, Frontend::Wrayth, "Wrayth");
             ui.radio_value(&mut self.manual_frontend, Frontend::Wizard, "Wizard");
+            #[cfg(target_os = "macos")]
             ui.radio_value(&mut self.manual_frontend, Frontend::Avalon, "Avalon");
         });
 
+        // Checkboxes — all visible, not conditionally hidden
         ui.checkbox(&mut self.manual_custom_launch_enabled, "Custom launch command");
         if self.manual_custom_launch_enabled {
+            // Disable custom launch if Avalon selected (matching lich-5)
+            #[cfg(target_os = "macos")]
+            if self.manual_frontend == Frontend::Avalon {
+                self.manual_custom_launch_enabled = false;
+            }
+
             let cmd_options = launch_cmd_suggestions();
             let dir_options = launch_dir_suggestions();
             ui.horizontal(|ui| {
@@ -978,7 +1104,7 @@ impl LoginApp {
                     &mut self.manual_custom_launch,
                     &cmd_options,
                 )
-                .hint_text("Custom command...")
+                .hint_text("(enter custom launch command)")
                 .show(ui);
             });
             ui.horizontal(|ui| {
@@ -988,22 +1114,20 @@ impl LoginApp {
                     &mut self.manual_custom_launch_dir,
                     &dir_options,
                 )
-                .hint_text("Working directory...")
+                .hint_text("(enter working directory for command)")
                 .show(ui);
             });
         }
 
-        ui.add_space(6.0);
         ui.checkbox(&mut self.manual_save, "Save this info for quick game entry");
-        if self.manual_save {
-            ui.checkbox(&mut self.manual_favorite, "\u{2605} Mark as favorite");
-        }
+        ui.checkbox(&mut self.manual_favorite, "\u{2605} Mark as favorite");
 
         ui.add_space(6.0);
 
-        // Play button — right-aligned
+        // Play button — right-aligned with matching padding
         let can_play = self.manual_selected_char.is_some() && is_connected && !authenticating;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+            ui.add_space(right_pad);
             if ui
                 .add_enabled(can_play, egui::Button::new("Play"))
                 .clicked()
@@ -1038,7 +1162,6 @@ impl LoginApp {
 
         let account = self.manual_account.clone();
         let password = self.manual_password.clone();
-        let game_code = self.manual_game_code.clone();
         let tx = self.fetch_tx.clone();
         let ctx = ctx.clone();
 
@@ -1051,7 +1174,8 @@ impl LoginApp {
                     return;
                 }
             };
-            let result = rt.block_on(list_characters(&account, &password, &game_code));
+            // Legacy mode: fetch ALL characters across ALL games (like lich-5)
+            let result = rt.block_on(list_all_characters(&account, &password));
             let _ = tx.send(result.map_err(|e| format!("{e:#}")));
             ctx.request_repaint();
         });
@@ -1063,7 +1187,8 @@ impl LoginApp {
                 if let Some(ch) = chars.get(idx) {
                     let account = self.manual_account.clone();
                     let password = self.manual_password.clone();
-                    let game_code = self.manual_game_code.clone();
+                    let game_code = ch.game_code.clone();
+                    let game_name = ch.game_name.clone();
                     let character = ch.name.clone();
 
                     let custom_launch = if self.manual_custom_launch_enabled {
@@ -1097,7 +1222,7 @@ impl LoginApp {
                             &account,
                             &character,
                             &game_code,
-                            Self::game_name(&game_code),
+                            &game_name,
                             self.manual_frontend.as_str(),
                             custom_launch.clone(),
                             custom_launch_dir.clone(),

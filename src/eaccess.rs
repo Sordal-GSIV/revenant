@@ -108,6 +108,8 @@ where
 pub struct CharacterEntry {
     pub id: String,
     pub name: String,
+    pub game_code: String,
+    pub game_name: String,
 }
 
 /// Connect to eAccess and return the character list for `game_code`.
@@ -133,7 +135,22 @@ pub async fn list_characters(
         bail!("SGE auth failed: {auth_resp}");
     }
     stream.write_all(b"M\n").await?;
-    let _ = read_packet(&mut stream).await?;
+    let m_resp = read_packet(&mut stream).await?;
+    // Parse game name from M response for this game_code
+    let game_name = {
+        let m_body = m_resp.strip_prefix("M\t").unwrap_or(&m_resp);
+        let m_parts: Vec<&str> = m_body.split('\t').collect();
+        let mut found = game_code.to_string();
+        let mut k = 0;
+        while k + 1 < m_parts.len() {
+            if m_parts[k].trim() == game_code {
+                found = m_parts[k + 1].trim().to_string();
+                break;
+            }
+            k += 2;
+        }
+        found
+    };
     stream.write_all(format!("F\t{game_code}\n").as_bytes()).await?;
     let _ = read_packet(&mut stream).await?;
     stream.write_all(format!("G\t{game_code}\n").as_bytes()).await?;
@@ -142,10 +159,10 @@ pub async fn list_characters(
     let _ = read_packet(&mut stream).await?;
     stream.write_all(b"C\n").await?;
     let char_resp = read_packet(&mut stream).await?;
-    parse_character_list(&char_resp)
+    parse_character_list(&char_resp, game_code, &game_name)
 }
 
-pub fn parse_character_list(resp: &str) -> Result<Vec<CharacterEntry>> {
+pub fn parse_character_list(resp: &str, game_code: &str, game_name: &str) -> Result<Vec<CharacterEntry>> {
     let parts: Vec<&str> = resp.trim().split('\t').collect();
     let skip = 5; // C + 4 numeric counts
     let mut entries = vec![];
@@ -154,11 +171,98 @@ pub fn parse_character_list(resp: &str) -> Result<Vec<CharacterEntry>> {
         let id = parts[i].to_string();
         let name = parts[i + 1].to_string();
         if !id.is_empty() && !name.is_empty() {
-            entries.push(CharacterEntry { id, name });
+            entries.push(CharacterEntry {
+                id,
+                name,
+                game_code: game_code.to_string(),
+                game_name: game_name.to_string(),
+            });
         }
         i += 2;
     }
     Ok(entries)
+}
+
+/// Connect to eAccess and return ALL characters across ALL games (legacy mode).
+/// Matches lich-5's `legacy: true` flow: K → A → M → then for each game: N → F → G → P → C.
+pub async fn list_all_characters(
+    account: &str,
+    password: &str,
+) -> Result<Vec<CharacterEntry>> {
+    let connector = build_tls_connector()?;
+    let tcp = TcpStream::connect((SGE_HOST, SGE_PORT)).await?;
+    let mut stream = connector.connect(SGE_HOST, tcp).await?;
+
+    // K — get hash key
+    stream.write_all(b"K\n").await?;
+    let key = read_packet(&mut stream).await?;
+    let hash = hash_password(password, &key);
+
+    // A — authenticate
+    let mut auth_cmd = format!("A\t{account}\t").into_bytes();
+    auth_cmd.extend_from_slice(&hash);
+    auth_cmd.push(b'\n');
+    stream.write_all(&auth_cmd).await?;
+    let auth_resp = read_packet(&mut stream).await?;
+    if !auth_resp.contains("KEY\t") {
+        bail!("SGE auth failed: {auth_resp}");
+    }
+
+    // M — get game list
+    stream.write_all(b"M\n").await?;
+    let m_resp = read_packet(&mut stream).await?;
+
+    // Parse game list from M response: "M\tGS3\tGemStone IV\tDR\tDragonRealms\t..."
+    let m_body = m_resp.strip_prefix("M\t").unwrap_or(&m_resp);
+    let m_parts: Vec<&str> = m_body.split('\t').collect();
+    let mut games: Vec<(String, String)> = Vec::new();
+    let mut j = 0;
+    while j + 1 < m_parts.len() {
+        let code = m_parts[j].trim().to_string();
+        let name = m_parts[j + 1].trim().to_string();
+        if !code.is_empty() && !name.is_empty() {
+            games.push((code, name));
+        }
+        j += 2;
+    }
+
+    // For each game: N → check STORM support → F → G → P → C
+    let mut all_chars: Vec<CharacterEntry> = Vec::new();
+    for (game_code, game_name) in &games {
+        // N — check if game supports STORM protocol
+        stream.write_all(format!("N\t{game_code}\n").as_bytes()).await?;
+        let n_resp = read_packet(&mut stream).await?;
+        if !n_resp.contains("STORM") {
+            continue;
+        }
+
+        // F — subscription check
+        stream.write_all(format!("F\t{game_code}\n").as_bytes()).await?;
+        let f_resp = read_packet(&mut stream).await?;
+        if !f_resp.contains("NORMAL")
+            && !f_resp.contains("PREMIUM")
+            && !f_resp.contains("TRIAL")
+            && !f_resp.contains("INTERNAL")
+            && !f_resp.contains("FREE")
+        {
+            continue;
+        }
+
+        // G, P — game/play selection
+        stream.write_all(format!("G\t{game_code}\n").as_bytes()).await?;
+        let _ = read_packet(&mut stream).await?;
+        stream.write_all(format!("P\t{game_code}\n").as_bytes()).await?;
+        let _ = read_packet(&mut stream).await?;
+
+        // C — character list
+        stream.write_all(b"C\n").await?;
+        let char_resp = read_packet(&mut stream).await?;
+        if let Ok(chars) = parse_character_list(&char_resp, game_code, game_name) {
+            all_chars.extend(chars);
+        }
+    }
+
+    Ok(all_chars)
 }
 
 /// Authenticate with the SGE eAccess server and return session credentials.
