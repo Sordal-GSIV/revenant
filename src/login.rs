@@ -495,8 +495,8 @@ impl eframe::App for LoginApp {
                     };
                 }
 
-                // Push theme ComboBox to the right
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Push theme ComboBox to the right, aligned to top of tab bar
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                     let themes = ["Slate", "Ember", "Fantasy", "Slate Light", "Ember Light", "Fantasy Light"];
                     let keys = ["slate", "ember", "fantasy", "slate_light", "ember_light", "fantasy_light"];
                     let current_idx = keys.iter().position(|&k| k == self.app_config.theme.as_str()).unwrap_or(0);
@@ -1017,67 +1017,55 @@ impl LoginApp {
             egui_theme::TreeColumn { label: "Character".into(), width: None, sortable: true },
         ];
 
-        ui.horizontal(|ui| {
-            ui.add_space(right_pad); // left padding
-            let list_width = ui.available_width() - right_pad; // right padding
-            ui.set_max_width(list_width);
-            // Reserve fixed height for character list area
-            ui.set_min_height(160.0);
-            egui::ScrollArea::vertical()
-                .max_height(160.0)
-                .show(ui, |ui| {
-                    ui.set_min_height(140.0); // ensure content area has height even when empty
-                    match &self.connect_state {
-                        ConnectState::Idle => {
-                            ui.label("");
-                        }
-                        ConnectState::Fetching => {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label("Connecting...");
-                            });
-                        }
-                        ConnectState::Connected(chars) => {
-                            let mut tree_rows: Vec<egui_theme::TreeRow> = chars
-                                .iter()
-                                .map(|ch| egui_theme::TreeRow {
-                                    cells: vec![
-                                        ch.game_name.clone(),
-                                        ch.name.clone(),
-                                    ],
-                                    children: vec![],
-                                    expanded: false,
-                                })
-                                .collect();
+        // Character list — always show TreeView with reserved space
+        {
+            // Build rows from connection state
+            let mut tree_rows: Vec<egui_theme::TreeRow> = match &self.connect_state {
+                ConnectState::Connected(chars) => chars
+                    .iter()
+                    .map(|ch| egui_theme::TreeRow {
+                        cells: vec![ch.game_name.clone(), ch.name.clone()],
+                        children: vec![],
+                        expanded: false,
+                    })
+                    .collect(),
+                _ => vec![],
+            };
 
-                            // Sort by game name ascending (matching lich-5)
-                            if self.manual_tree_sort_col.is_some() {
-                                let col = self.manual_tree_sort_col.unwrap_or(0);
-                                tree_rows.sort_by(|a, b| {
-                                    let cmp = a.cells.get(col).cmp(&b.cells.get(col));
-                                    if self.manual_tree_sort_asc { cmp } else { cmp.reverse() }
-                                });
-                            }
-
-                            let resp = egui_theme::TreeView::new(
-                                "manual_chars",
-                                &columns,
-                                &mut tree_rows,
-                                &mut self.manual_tree_selected,
-                            )
-                            .sort_state(
-                                &mut self.manual_tree_sort_col,
-                                &mut self.manual_tree_sort_asc,
-                            )
-                            .show(ui);
-
-                            if resp.clicked_row.is_some() {
-                                self.manual_selected_char = self.manual_tree_selected;
-                            }
-                        }
-                    }
+            // Sort if sort column set
+            if let Some(col) = self.manual_tree_sort_col {
+                tree_rows.sort_by(|a, b| {
+                    let cmp = a.cells.get(col).cmp(&b.cells.get(col));
+                    if self.manual_tree_sort_asc { cmp } else { cmp.reverse() }
                 });
-        });
+            }
+
+            // Show "Connecting..." overlay text if fetching
+            if self.connect_state == ConnectState::Fetching {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Connecting...");
+                });
+            }
+
+            // TreeView — always visible with min_body_height for empty state
+            let resp = egui_theme::TreeView::new(
+                "manual_chars",
+                &columns,
+                &mut tree_rows,
+                &mut self.manual_tree_selected,
+            )
+            .sort_state(
+                &mut self.manual_tree_sort_col,
+                &mut self.manual_tree_sort_asc,
+            )
+            .min_body_height(120.0)
+            .show(ui);
+
+            if resp.clicked_row.is_some() {
+                self.manual_selected_char = self.manual_tree_selected;
+            }
+        }
 
         ui.add_space(6.0);
 
