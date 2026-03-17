@@ -13,7 +13,7 @@ pub struct Config {
     pub game: String,
     #[arg(long)]
     pub character: Option<String>,
-    #[arg(long, default_value = "../scripts")]
+    #[arg(long, default_value = "./scripts")]
     pub scripts_dir: String,
     #[arg(long, default_value = "revenant.db")]
     pub db_path: String,
