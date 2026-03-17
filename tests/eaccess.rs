@@ -16,7 +16,7 @@ fn test_hash_password_transforms_each_byte() {
 #[test]
 fn test_parse_character_list() {
     let resp = "C\t0\t2\t2\t0\tABC123\tAragorn\tDEF456\tLegolas\n";
-    let entries = parse_character_list(resp).unwrap();
+    let entries = parse_character_list(resp, "GS3", "GemStone IV").unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].id, "ABC123");
     assert_eq!(entries[0].name, "Aragorn");

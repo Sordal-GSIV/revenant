@@ -137,7 +137,7 @@ async fn test_gamestate_misc_fields() {
     engine.eval_lua(r#"
         assert(GameState.server_time == 1710000000)
         assert(GameState.name == "Sordal")
-        assert(GameState.game == "GS")
+        assert(GameState.game == "GS3")
         assert(GameState.experience == 12345)
         assert(GameState.right_hand_noun == "sword")
         assert(GameState.left_hand_noun == nil)

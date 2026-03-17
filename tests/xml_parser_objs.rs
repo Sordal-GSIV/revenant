@@ -96,7 +96,7 @@ fn test_component_clear_emitted_for_room_objs() {
 #[test]
 fn test_obj_tag_split_across_chunks() {
     // Simulate TCP split mid-tag
-    let mut parser = revenant::xml_parser::StreamParser::new();
+    let mut parser = revenant::xml_parser::StreamParser::default();
     let chunk1 = "<component id='room objs'><a exist=\"-123\" noun=\"goblin\">a ";
     let chunk2 = "snarling goblin</a></component>";
     let e1 = parser.feed(chunk1);

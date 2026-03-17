@@ -4,7 +4,7 @@ use revenant::game_obj::GameObjRegistry;
 
 #[test]
 fn test_full_familiar_stream_pipeline() {
-    let mut parser = StreamParser::new();
+    let mut parser = StreamParser::default();
     let mut gs = GameState::default();
     let mut registry = GameObjRegistry::new();
 
@@ -61,7 +61,7 @@ fn test_full_familiar_stream_pipeline() {
 
 #[test]
 fn test_bounty_society_pipeline() {
-    let mut parser = StreamParser::new();
+    let mut parser = StreamParser::default();
     let mut gs = GameState::default();
 
     let xml = concat!(
@@ -81,7 +81,7 @@ fn test_bounty_society_pipeline() {
 
 #[test]
 fn test_normal_parsing_unaffected_by_stream_code() {
-    let mut parser = StreamParser::new();
+    let mut parser = StreamParser::default();
     let events = parser.feed(
         r#"<style id="roomName"/>Town Square<style id=""/>"#
     );
@@ -91,7 +91,7 @@ fn test_normal_parsing_unaffected_by_stream_code() {
 
 #[test]
 fn test_familiar_stream_split_feeds() {
-    let mut parser = StreamParser::new();
+    let mut parser = StreamParser::default();
     let e1 = parser.feed(r#"<pushStream id="familiar"/><style id="roomName"/>Room"#);
     let e2 = parser.feed(r#" Name<style id=""/><popStream id="familiar"/>"#);
     let all: Vec<_> = e1.into_iter().chain(e2).collect();

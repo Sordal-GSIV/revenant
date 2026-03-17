@@ -124,7 +124,7 @@ fn test_encumbrance_to_str_and_value() {
 
 #[test]
 fn test_game_to_str() {
-    assert_eq!(Game::GemStone.as_str(), "GS");
+    assert_eq!(Game::GemStone.as_str(), "GS3");
     assert_eq!(Game::DragonRealms.as_str(), "DR");
 }
 
