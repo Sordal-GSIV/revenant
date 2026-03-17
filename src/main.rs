@@ -292,7 +292,9 @@ fn run_with_gui(config: revenant::config::Config) -> anyhow::Result<()> {
             Box::new(move |_cc| Ok(Box::new(MonitorApp::new(engine, &theme_name)))),
         )
         .map_err(|e| anyhow::anyhow!("egui: {e}"))?;
-        return Ok(());
+        // Monitor window closed — exit cleanly (don't leave orphan proxy)
+        info!("Monitor closed, shutting down");
+        std::process::exit(0);
     }
 
     // No monitor window — block until proxy finishes
