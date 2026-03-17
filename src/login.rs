@@ -176,6 +176,7 @@ pub struct LoginApp {
     acct_tree_selected: Option<usize>,
     acct_tree_sort_col: Option<usize>,
     acct_tree_sort_asc: bool,
+    acct_tree_expanded: std::collections::HashMap<String, bool>,
     // Add Character sub-tab
     add_char_account_idx: usize,
     add_char_name: String,
@@ -271,6 +272,7 @@ impl LoginApp {
             acct_tree_selected: None,
             acct_tree_sort_col: None,
             acct_tree_sort_asc: true,
+            acct_tree_expanded: std::collections::HashMap::new(),
             add_char_account_idx: 0,
             add_char_name: String::new(),
             add_char_game_idx: 0,
@@ -1289,10 +1291,10 @@ impl LoginApp {
 
         // Build hierarchical TreeView data
         let columns = vec![
-            egui_theme::TreeColumn { label: "Account".into(), width: Some(120.0), sortable: true },
+            egui_theme::TreeColumn { label: "Account".into(), width: Some(120.0), sortable: false },
             egui_theme::TreeColumn { label: "Character".into(), width: Some(120.0), sortable: true },
-            egui_theme::TreeColumn { label: "Game".into(), width: Some(120.0), sortable: false },
-            egui_theme::TreeColumn { label: "Frontend".into(), width: Some(80.0), sortable: false },
+            egui_theme::TreeColumn { label: "Game".into(), width: Some(120.0), sortable: true },
+            egui_theme::TreeColumn { label: "Frontend".into(), width: Some(80.0), sortable: true },
             egui_theme::TreeColumn { label: "Fav".into(), width: Some(40.0), sortable: false },
         ];
 
@@ -1320,6 +1322,9 @@ impl LoginApp {
                         }
                     })
                     .collect();
+                let is_expanded = *self.acct_tree_expanded
+                    .entry(acct.account.clone())
+                    .or_insert(true); // default expanded
                 egui_theme::TreeRow {
                     cells: vec![
                         acct.account.to_uppercase(),
@@ -1329,7 +1334,7 @@ impl LoginApp {
                         String::new(),
                     ],
                     children,
-                    expanded: true,
+                    expanded: is_expanded,
                 }
             })
             .collect();
@@ -1343,6 +1348,11 @@ impl LoginApp {
         .sort_state(&mut self.acct_tree_sort_col, &mut self.acct_tree_sort_asc)
         .min_body_height(320.0)
         .show(ui);
+
+        // Write back expanded state from tree_rows to persisted HashMap
+        for (row, acct) in tree_rows.iter().zip(self.store.accounts.iter()) {
+            self.acct_tree_expanded.insert(acct.account.clone(), row.expanded);
+        }
 
         ui.add_space(8.0);
 
