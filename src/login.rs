@@ -1687,6 +1687,10 @@ impl LoginApp {
                     }
                 });
 
+            // Refresh button (reload accounts list)
+            if ui.add(egui::Button::new("\u{21BB}").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                self.store = CredentialStore::load().unwrap_or_default();
+            }
             if ui.add_enabled(!self.add_char_fetching, egui::Button::new("Fetch")).clicked() {
                 let acct_name = &account_names[self.add_char_account_idx];
                 match self.store.get_password(acct_name, self.key.as_ref()) {
@@ -1804,6 +1808,7 @@ impl LoginApp {
                 self.acct_sub_tab_idx = 0;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                ui.add_space(16.0); // right padding
                 let can_add = self.add_char_tree_selected.is_some();
                 if ui.add_enabled(can_add, egui::Button::new("Add Character")).clicked() {
                     if let Some(sel) = self.add_char_tree_selected {
@@ -1897,6 +1902,7 @@ impl LoginApp {
                 self.acct_sub_tab_idx = 0;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                ui.add_space(16.0); // right padding
                 if ui.add_enabled(!self.add_acct_fetching, egui::Button::new("Add Account")).clicked() {
                     if self.add_acct_username.is_empty() {
                         self.add_acct_status = "Username cannot be empty.".to_string();
@@ -1961,6 +1967,14 @@ impl LoginApp {
 
         ui.add_space(8.0);
 
+        // Header (matching lich-5)
+        ui.label(egui::RichText::new("Encryption Management").size(16.0).strong());
+        ui.add_space(4.0);
+        ui.label("Manage your encryption settings and passwords");
+
+        ui.add_space(12.0);
+
+        // Current mode
         let mode_label = match self.enc_config.mode {
             crate::encryption::EncryptionMode::Plaintext => "Plaintext (no encryption)",
             crate::encryption::EncryptionMode::Standard => "Standard (AES-256-GCM, local key file)",
@@ -1973,16 +1987,21 @@ impl LoginApp {
             ui.label(egui::RichText::new(mode_label).strong());
         });
 
-        ui.add_space(12.0);
+        ui.add_space(16.0);
 
-        if ui.button("Change Encryption Mode").clicked() {
-            self.enc_new_mode = self.enc_config.mode.clone();
-            self.enc_new_password.clear();
-            self.enc_confirm_password.clear();
-            self.enc_current_password.clear();
-            self.enc_status.clear();
-            self.enc_show_dialog = true;
-        }
+        // Centered, wider button
+        ui.vertical_centered(|ui| {
+            let button = egui::Button::new("Change Encryption Mode")
+                .min_size(egui::vec2(250.0, 30.0));
+            if ui.add(button).clicked() {
+                self.enc_new_mode = self.enc_config.mode.clone();
+                self.enc_new_password.clear();
+                self.enc_confirm_password.clear();
+                self.enc_current_password.clear();
+                self.enc_status.clear();
+                self.enc_show_dialog = true;
+            }
+        });
 
         if !self.enc_status.is_empty() && !self.enc_show_dialog {
             ui.add_space(8.0);
