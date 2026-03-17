@@ -1133,22 +1133,26 @@ impl LoginApp {
             }
 
             // TreeView — always visible with min_body_height for empty state
-            let resp = egui_theme::TreeView::new(
-                "manual_chars",
-                &columns,
-                &mut tree_rows,
-                &mut self.manual_tree_selected,
-            )
-            .sort_state(
-                &mut self.manual_tree_sort_col,
-                &mut self.manual_tree_sort_asc,
-            )
-            .min_body_height(120.0)
-            .show(ui);
+            let tv_pad = 16.0;
+            ui.scope(|ui| {
+                ui.set_max_width(ui.available_width() - tv_pad);
+                let resp = egui_theme::TreeView::new(
+                    "manual_chars",
+                    &columns,
+                    &mut tree_rows,
+                    &mut self.manual_tree_selected,
+                )
+                .sort_state(
+                    &mut self.manual_tree_sort_col,
+                    &mut self.manual_tree_sort_asc,
+                )
+                .min_body_height(120.0)
+                .show(ui);
 
-            if resp.clicked_row.is_some() {
-                self.manual_selected_char = self.manual_tree_selected;
-            }
+                if resp.clicked_row.is_some() {
+                    self.manual_selected_char = self.manual_tree_selected;
+                }
+            });
         }
 
         ui.add_space(6.0);
@@ -1422,15 +1426,18 @@ impl LoginApp {
             })
             .collect();
 
-        egui_theme::TreeView::new(
-            "acct_tree",
-            &columns,
-            &mut tree_rows,
-            &mut self.acct_tree_selected,
-        )
-        .sort_state(&mut self.acct_tree_sort_col, &mut self.acct_tree_sort_asc)
-        .min_body_height(320.0)
-        .show(ui);
+        ui.scope(|ui| {
+            ui.set_max_width(ui.available_width() - 16.0);
+            egui_theme::TreeView::new(
+                "acct_tree",
+                &columns,
+                &mut tree_rows,
+                &mut self.acct_tree_selected,
+            )
+            .sort_state(&mut self.acct_tree_sort_col, &mut self.acct_tree_sort_asc)
+            .min_body_height(320.0)
+            .show(ui);
+        });
 
         // Write back expanded state from tree_rows to persisted HashMap
         for (row, acct) in tree_rows.iter().zip(self.store.accounts.iter()) {
@@ -1749,14 +1756,17 @@ impl LoginApp {
             })
             .collect();
 
-        egui_theme::TreeView::new(
-            "add_char_tree",
-            &columns,
-            &mut tree_rows,
-            &mut self.add_char_tree_selected,
-        )
-        .min_body_height(120.0)
-        .show(ui);
+        ui.scope(|ui| {
+            ui.set_max_width(ui.available_width() - 16.0);
+            egui_theme::TreeView::new(
+                "add_char_tree",
+                &columns,
+                &mut tree_rows,
+                &mut self.add_char_tree_selected,
+            )
+            .min_body_height(120.0)
+            .show(ui);
+        });
 
         ui.add_space(6.0);
 
