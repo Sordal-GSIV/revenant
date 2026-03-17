@@ -671,3 +671,114 @@ end
 function bin2dec(s)
     return tonumber(s, 2) or 0
 end
+
+-- ============================================================
+-- Client command buffer (ring buffer of last 100 upstream commands)
+-- ============================================================
+_CLIENT_BUFFER = {}
+_CLIENT_BUFFER_MAX = 100
+UpstreamHook.add("__client_buffer", function(line)
+    _CLIENT_BUFFER[#_CLIENT_BUFFER + 1] = line
+    if #_CLIENT_BUFFER > _CLIENT_BUFFER_MAX then
+        table.remove(_CLIENT_BUFFER, 1)
+    end
+    return line
+end)
+
+-- ============================================================
+-- Script.current — returns table with current script info
+-- ============================================================
+function Script.current()
+    return {
+        name = Script.name,
+        paused = false,  -- a paused script cannot be executing this
+    }
+end
+
+-- ============================================================
+-- MINDMAP — mind state string → letter grade
+-- ============================================================
+MINDMAP = {
+    ["clear as a bell"] = "A",
+    ["fresh and clear"]  = "B",
+    ["clear"]            = "C",
+    ["muddled"]          = "D",
+    ["becoming numbed"]  = "E",
+    ["numbed"]           = "F",
+    ["must rest"]        = "G",
+    ["saturated"]        = "H",
+}
+
+-- ============================================================
+-- ICONMAP — XML icon id → human-readable status name
+-- ============================================================
+ICONMAP = {
+    ["IconBLEEDING"]  = "bleeding",
+    ["IconSTUNNED"]   = "stunned",
+    ["IconDEAD"]      = "dead",
+    ["IconPOISONED"]  = "poisoned",
+    ["IconDISEASED"]  = "diseased",
+    ["IconSITTING"]   = "sitting",
+    ["IconKNEELING"]  = "kneeling",
+    ["IconPRONE"]     = "prone",
+    ["IconSTANDING"]  = "standing",
+    ["IconHIDDEN"]    = "hidden",
+    ["IconINVISIBLE"] = "invisible",
+    ["IconWEBBED"]    = "webbed",
+    ["IconJOINED"]    = "joined",
+}
+
+-- ============================================================
+-- xml_encode — global XML entity escaping
+-- ============================================================
+function xml_encode(text)
+    return text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;")
+end
+
+-- ============================================================
+-- respond_to_window — send text to a specific stream window
+-- ============================================================
+function respond_to_window(window, text)
+    respond("<pushStream id='" .. window .. "'/>" .. xml_encode(text) .. "<popStream id='" .. window .. "'/>")
+end
+
+-- ============================================================
+-- Deprecated compat shims
+-- ============================================================
+function fetchloot()
+    return GameObj.loot()
+end
+
+function take(item)
+    fput("get " .. tostring(item))
+end
+
+function survivepoison()
+    return not GameState.poisoned
+end
+
+function survivedisease()
+    return not GameState.diseased
+end
+
+-- ============================================================
+-- arrival_pcs — track PCs who arrived in the current room
+-- ============================================================
+_arrival_pcs = {}
+local _last_room_count = 0
+DownstreamHook.add("__arrival_pcs", function(line)
+    if GameState.room_count ~= _last_room_count then
+        _arrival_pcs = {}
+        _last_room_count = GameState.room_count
+    end
+    local name = line:match("^(%u%a+) just arrived%.")
+            or line:match("^(%u%a+) arrived%.")
+    if name then
+        _arrival_pcs[#_arrival_pcs + 1] = name
+    end
+    return line
+end)
+
+function arrival_pcs()
+    return _arrival_pcs
+end
