@@ -602,7 +602,12 @@ impl LoginApp {
                     favorites.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
 
                     if favorites.is_empty() {
-                        ui.label("No favorite characters yet.");
+                        ui.add_space(50.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label("No favorite characters yet.");
+                            ui.add_space(8.0);
+                            ui.label("Mark characters as favorites using the \u{2605} button\nin the account tabs or saved entries list.");
+                        });
                     } else {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             let mut last_game: Option<String> = None;
