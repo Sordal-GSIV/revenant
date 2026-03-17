@@ -154,7 +154,7 @@ fn build_state_snapshot(gs: &GameState) -> String {
 
 /// Write a session file for the detachable client connection.
 fn write_session_file(scripts_dir: &str, character: &str, host: &str, port: u16, game: &str) {
-    let sessions_dir = format!("{scripts_dir}/_data/sessions");
+    let sessions_dir = format!("{scripts_dir}/data/sessions");
     if let Err(e) = std::fs::create_dir_all(&sessions_dir) {
         warn!("Failed to create sessions dir {sessions_dir}: {e}");
         return;
@@ -172,7 +172,7 @@ fn write_session_file(scripts_dir: &str, character: &str, host: &str, port: u16,
 
 /// Delete the session file for the detachable client.
 fn delete_session_file(scripts_dir: &str, character: &str) {
-    let path = format!("{scripts_dir}/_data/sessions/{character}.session");
+    let path = format!("{scripts_dir}/data/sessions/{character}.session");
     if std::fs::remove_file(&path).is_ok() {
         info!("Session file removed: {path}");
     }
