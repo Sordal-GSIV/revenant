@@ -99,40 +99,36 @@ struct PendingPlay {
 }
 
 /// Platform-specific launch command suggestions.
+/// Custom launch command suggestions — matches lich-5's login_tab_utils.rb
 fn launch_cmd_suggestions() -> Vec<String> {
-    if cfg!(target_os = "windows") {
-        vec![
-            r"C:\Program Files\Wrayth\Wrayth.exe".into(),
-            r"C:\Program Files\Wizard\Wizard.exe".into(),
-        ]
-    } else if cfg!(target_os = "macos") {
-        vec![
-            "/Applications/Wrayth.app/Contents/MacOS/Wrayth".into(),
-            "/Applications/Wizard.app/Contents/MacOS/Wizard".into(),
-        ]
-    } else {
-        vec![
-            "/usr/bin/wrayth".into(),
-            "/usr/local/bin/wizard".into(),
-        ]
+    let mut suggestions = vec![
+        "Wizard.Exe /GGS /H127.0.0.1 /P%port% /K%key%".into(),
+        "Stormfront.exe /GGS /Hlocalhost /P%port% /K%key%".into(),
+    ];
+    if cfg!(target_os = "macos") {
+        suggestions.push(
+            "/Applications/Warlock.app/Contents/MacOS/Warlock --host localhost --port %port% --key %key%".into()
+        );
     }
+    if cfg!(target_os = "windows") {
+        suggestions.push(
+            "warlock --host localhost --port %port% --key %key%".into()
+        );
+    }
+    if cfg!(target_os = "linux") {
+        suggestions.push(
+            "/usr/bin/warlock --host localhost --port %port% --key %key%".into()
+        );
+    }
+    suggestions
 }
 
-/// Platform-specific launch directory suggestions.
+/// Custom launch directory suggestions — matches lich-5's login_tab_utils.rb
 fn launch_dir_suggestions() -> Vec<String> {
-    if cfg!(target_os = "windows") {
-        vec![
-            String::new(),
-            r"C:\Games".into(),
-        ]
-    } else {
-        vec![
-            String::new(),
-            dirs::home_dir()
-                .map(|h| h.join("games").to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        ]
-    }
+    vec![
+        "../wizard".into(),
+        "../StormFront".into(),
+    ]
 }
 
 pub struct LoginApp {
