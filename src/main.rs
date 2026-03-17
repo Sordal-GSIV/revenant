@@ -70,8 +70,6 @@ fn main() -> anyhow::Result<()> {
 /// - macOS: returns None (Avalon uses a SAL file, no registry needed).
 #[allow(dead_code)]
 fn simu_registry_dir(subkey: &str) -> Option<String> {
-    let reg_path = format!("HKLM\\SOFTWARE\\WOW6432Node\\Simutronics\\{subkey}");
-
     #[cfg(target_os = "windows")]
     {
         use winreg::enums::*;
@@ -84,6 +82,7 @@ fn simu_registry_dir(subkey: &str) -> Option<String> {
 
     #[cfg(not(target_os = "windows"))]
     {
+        let reg_path = format!("HKLM\\SOFTWARE\\WOW6432Node\\Simutronics\\{subkey}");
         let is_wsl2 = std::env::var_os("WSL_DISTRO_NAME").is_some();
         let (prog, args): (&str, Vec<String>) = if is_wsl2 {
             ("/mnt/c/Windows/System32/reg.exe",
@@ -313,10 +312,11 @@ fn show_login_window() -> anyhow::Result<revenant::login::LoginResult> {
     let result_slot: Arc<Mutex<Option<LoginResult>>> = Arc::new(Mutex::new(None));
     let result_slot2 = result_slot.clone();
 
+    let app_config = revenant::app_config::AppConfig::load();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Revenant — Login")
-            .with_inner_size([480.0, 400.0]),
+            .with_inner_size([app_config.window_width, app_config.window_height]),
         ..Default::default()
     };
 
